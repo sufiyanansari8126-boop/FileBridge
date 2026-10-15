@@ -22,13 +22,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle 8.6
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.6'
 
       - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload Ready-to-Install APK
         uses: actions/upload-artifact@v4
@@ -36,4 +34,3 @@ jobs:
           name: FileBridge-Debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
