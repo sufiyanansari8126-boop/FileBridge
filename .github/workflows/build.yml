@@ -3,8 +3,6 @@ name: Build FileBridge Android APK
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
@@ -22,13 +20,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.6'
-
-      - name: Build Debug APK Direct
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Build APK using Fallback
+        run: |
+          chmod +x gradlew || true
+          ./gradlew assembleDebug --no-daemon || gradle assembleDebug --no-daemon || ./gradlew app:assembleDebug --no-daemon
 
       - name: Upload Ready-to-Install APK
         uses: actions/upload-artifact@v4
