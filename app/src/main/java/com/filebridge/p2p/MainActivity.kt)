@@ -1,0 +1,759 @@
+package com.filebridge.p2p
+
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.filebridge.p2p.ui.theme.*
+import kotlinx.coroutines.delay
+
+enum class AppScreen {
+    SPLASH,
+    INTRO,
+    HOME,
+    SEND_PREPARATION,
+    RECEIVE_PREPARATION,
+    NEARBY_DEVICES,
+    TRANSFER_HISTORY,
+    SETTINGS,
+    HELP
+}
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val defaultDeviceName = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+
+        setContent {
+            var currentLanguage by remember { mutableStateOf(AppLanguage.HINDI) }
+            var isDarkMode by remember { mutableStateOf(true) }
+            var showFirstTimeIntro by remember { mutableStateOf(true) }
+            var currentScreen by remember { mutableStateOf(AppScreen.SPLASH) }
+            var customDeviceName by remember { mutableStateOf(defaultDeviceName) }
+
+            val strings = AppStringsProvider.get(currentLanguage)
+
+            LaunchedEffect(Unit) {
+                delay(1400)
+                currentScreen = if (showFirstTimeIntro) AppScreen.INTRO else AppScreen.HOME
+            }
+
+            FileBridgeTheme(darkTheme = isDarkMode) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    when (currentScreen) {
+                        AppScreen.SPLASH -> SplashScreen(strings)
+                        AppScreen.INTRO -> FirstTimeIntroScreen(
+                            strings = strings,
+                            currentLanguage = currentLanguage,
+                            onLanguageToggle = {
+                                currentLanguage = if (currentLanguage == AppLanguage.HINDI) AppLanguage.ENGLISH else AppLanguage.HINDI
+                            },
+                            onContinue = {
+                                showFirstTimeIntro = false
+                                currentScreen = AppScreen.HOME
+                            }
+                        )
+                        else -> MainScaffoldContainer(
+                            currentScreen = currentScreen,
+                            onNavigate = { currentScreen = it },
+                            strings = strings,
+                            currentLanguage = currentLanguage,
+                            onLanguageChange = { currentLanguage = it },
+                            isDarkMode = isDarkMode,
+                            onThemeToggle = { isDarkMode = it },
+                            deviceName = customDeviceName,
+                            onDeviceNameChange = { customDeviceName = it }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SplashScreen(strings: LocalizedStrings) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppBranding.PrimaryGradientBrush),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Color.White.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SwapHoriz,
+                    contentDescription = AppBranding.APP_NAME,
+                    tint = Color.White,
+                    modifier = Modifier.size(56.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = AppBranding.APP_NAME,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = strings.appTagline,
+                fontSize = 15.sp,
+                color = Color.White.copy(alpha = 0.85f),
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+fun FirstTimeIntroScreen(
+    strings: LocalizedStrings,
+    currentLanguage: AppLanguage,
+    onLanguageToggle: () -> Unit,
+    onContinue: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            OutlinedButton(
+                onClick = onLanguageToggle,
+                shape = RoundedCornerShape(50)
+            ) {
+                Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (currentLanguage == AppLanguage.HINDI) "English" else "हिंदी")
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(110.dp)
+                    .clip(CircleShape)
+                    .background(AppBranding.PrimaryGradientBrush),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.WifiTethering,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(54.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(28.dp))
+            Text(
+                text = strings.introTitle,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = strings.introSubtitle,
+                fontSize = 16.sp,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 24.sp
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VerifiedUser,
+                        contentDescription = null,
+                        tint = AppBranding.EmeraldSuccess
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = strings.securityBadgeText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = onContinue,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AppBranding.PrimaryBlue)
+        ) {
+            Text(
+                text = strings.getStartedBtn,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.White)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainScaffoldContainer(
+    currentScreen: AppScreen,
+    onNavigate: (AppScreen) -> Unit,
+    strings: LocalizedStrings,
+    currentLanguage: AppLanguage,
+    onLanguageChange: (AppLanguage) -> Unit,
+    isDarkMode: Boolean,
+    onThemeToggle: (Boolean) -> Unit,
+    deviceName: String,
+    onDeviceNameChange: (String) -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AppBranding.PrimaryGradientBrush),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SwapHoriz,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = AppBranding.APP_NAME,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 19.sp
+                            )
+                            Text(
+                                text = strings.offlineReadyText,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = {
+                            onLanguageChange(
+                                if (currentLanguage == AppLanguage.HINDI) AppLanguage.ENGLISH else AppLanguage.HINDI
+                            )
+                        }
+                    ) {
+                        Text(
+                            text = if (currentLanguage == AppLanguage.HINDI) "EN" else "हिंदी",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = { onThemeToggle(!isDarkMode) }) {
+                        Icon(
+                            imageVector = if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Toggle Theme"
+                        )
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.HOME ||
+                            currentScreen == AppScreen.SEND_PREPARATION ||
+                            currentScreen == AppScreen.RECEIVE_PREPARATION,
+                    onClick = { onNavigate(AppScreen.HOME) },
+                    icon = { Icon(Icons.Default.Home, contentDescription = strings.navHome) },
+                    label = { Text(strings.navHome) }
+                )
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.NEARBY_DEVICES,
+                    onClick = { onNavigate(AppScreen.NEARBY_DEVICES) },
+                    icon = { Icon(Icons.Default.Radar, contentDescription = strings.navNearby) },
+                    label = { Text(strings.navNearby) }
+                )
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.TRANSFER_HISTORY,
+                    onClick = { onNavigate(AppScreen.TRANSFER_HISTORY) },
+                    icon = { Icon(Icons.Default.History, contentDescription = strings.navHistory) },
+                    label = { Text(strings.navHistory) }
+                )
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.SETTINGS || currentScreen == AppScreen.HELP,
+                    onClick = { onNavigate(AppScreen.SETTINGS) },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = strings.navSettings) },
+                    label = { Text(strings.navSettings) }
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            when (currentScreen) {
+                AppScreen.HOME -> HomeScreenContent(
+                    strings = strings,
+                    deviceName = deviceName,
+                    onSendClick = { onNavigate(AppScreen.SEND_PREPARATION) },
+                    onReceiveClick = { onNavigate(AppScreen.RECEIVE_PREPARATION) },
+                    onNearbyClick = { onNavigate(AppScreen.NEARBY_DEVICES) }
+                )
+                AppScreen.SEND_PREPARATION -> MilestonePlaceholderScreen(
+                    title = strings.sendButtonTitle,
+                    subtitle = if (currentLanguage == AppLanguage.HINDI)
+                        "यह स्क्रीन Milestone 2 में Android Storage Access Framework (SAF) से जुड़ेगी।"
+                    else
+                        "This screen connects to Android SAF in Milestone 2.",
+                    icon = Icons.Default.UploadFile,
+                    onBack = { onNavigate(AppScreen.HOME) }
+                )
+                AppScreen.RECEIVE_PREPARATION -> MilestonePlaceholderScreen(
+                    title = strings.receiveButtonTitle,
+                    subtitle = if (currentLanguage == AppLanguage.HINDI)
+                        "यह स्क्रीन Milestone 2 और 3 में Wi-Fi Direct रिसीवर चालू करेगी।"
+                    else
+                        "This screen activates Wi-Fi Direct receiver in Milestones 2 & 3.",
+                    icon = Icons.Default.Download,
+                    onBack = { onNavigate(AppScreen.HOME) }
+                )
+                AppScreen.NEARBY_DEVICES -> MilestonePlaceholderScreen(
+                    title = strings.navNearby,
+                    subtitle = if (currentLanguage == AppLanguage.HINDI)
+                        "Milestone 3 में यहाँ आस-पास के एंड्रॉइड फ़ोनों की लाइव सूची दिखेगी।"
+                    else
+                        "In Milestone 3, nearby Android devices will appear here.",
+                    icon = Icons.Default.Radar,
+                    onBack = { onNavigate(AppScreen.HOME) }
+                )
+                AppScreen.TRANSFER_HISTORY -> MilestonePlaceholderScreen(
+                    title = strings.navHistory,
+                    subtitle = if (currentLanguage == AppLanguage.HINDI)
+                        "Milestone 6 में यहाँ Room Database से इतिहास दिखेगा।"
+                    else
+                        "In Milestone 6, transfer history backed by Room database will appear here.",
+                    icon = Icons.Default.History,
+                    onBack = { onNavigate(AppScreen.HOME) }
+                )
+                AppScreen.SETTINGS -> SettingsScreenContent(
+                    strings = strings,
+                    currentLanguage = currentLanguage,
+                    onLanguageChange = onLanguageChange,
+                    isDarkMode = isDarkMode,
+                    onThemeToggle = onThemeToggle,
+                    deviceName = deviceName,
+                    onDeviceNameChange = onDeviceNameChange,
+                    onOpenHelp = { onNavigate(AppScreen.HELP) }
+                )
+                AppScreen.HELP -> HelpScreenContent(
+                    currentLanguage = currentLanguage,
+                    onBack = { onNavigate(AppScreen.SETTINGS) }
+                )
+                else -> {}
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeScreenContent(
+    strings: LocalizedStrings,
+    deviceName: String,
+    onSendClick: () -> Unit,
+    onReceiveClick: () -> Unit,
+    onNearbyClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        Card(
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Smartphone,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = strings.deviceNameLabel,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = deviceName,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = AppBranding.EmeraldSuccess.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = "P2P Ready",
+                        color = AppBranding.EmeraldSuccess,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+
+        HeroActionCard(
+            title = strings.sendButtonTitle,
+            subtitle = strings.sendButtonSubtitle,
+            icon = Icons.Default.Upload,
+            gradient = AppBranding.SendCardGradient,
+            onClick = onSendClick
+        )
+
+        HeroActionCard(
+            title = strings.receiveButtonTitle,
+            subtitle = strings.receiveButtonSubtitle,
+            icon = Icons.Default.Download,
+            gradient = AppBranding.ReceiveCardGradient,
+            onClick = onReceiveClick
+        )
+
+        OutlinedCard(
+            onClick = onNearbyClick,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCodeScanner,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strings.quickQrPair,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    Text(
+                        text = strings.securityBadgeText,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun HeroActionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    gradient: Brush,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(26.dp))
+            .background(gradient)
+            .clickable(onClick = onClick)
+            .padding(24.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 14.sp,
+                    color = Color.White.copy(alpha = 0.9f),
+                    lineHeight = 20.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = Color.White,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsScreenContent(
+    strings: LocalizedStrings,
+    currentLanguage: AppLanguage,
+    onLanguageChange: (AppLanguage) -> Unit,
+    isDarkMode: Boolean,
+    onThemeToggle: (Boolean) -> Unit,
+    deviceName: String,
+    onDeviceNameChange: (String) -> Unit,
+    onOpenHelp: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            text = strings.navSettings,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        OutlinedTextField(
+            value = deviceName,
+            onValueChange = onDeviceNameChange,
+            label = { Text(strings.deviceNameLabel) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp)
+        )
+
+        Card(shape = RoundedCornerShape(16.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(text = strings.languageSettingTitle, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FilterChip(
+                        selected = currentLanguage == AppLanguage.HINDI,
+                        onClick = { onLanguageChange(AppLanguage.HINDI) },
+                        label = { Text("हिंदी") }
+                    )
+                    FilterChip(
+                        selected = currentLanguage == AppLanguage.ENGLISH,
+                        onClick = { onLanguageChange(AppLanguage.ENGLISH) },
+                        label = { Text("English") }
+                    )
+                }
+            }
+        }
+
+        Card(shape = RoundedCornerShape(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(text = strings.themeSettingTitle, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = if (isDarkMode) strings.darkModeLabel else strings.lightModeLabel,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = isDarkMode, onCheckedChange = onThemeToggle)
+            }
+        }
+
+        OutlinedButton(
+            onClick = onOpenHelp,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(Icons.Default.HelpOutline, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(strings.helpAndTroubleshooting)
+        }
+    }
+}
+
+@Composable
+fun HelpScreenContent(
+    currentLanguage: AppLanguage,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        TextButton(onClick = onBack) {
+            Icon(Icons.Default.ArrowBack, contentDescription = null)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(if (currentLanguage == AppLanguage.HINDI) "वापस जाएं" else "Back")
+        }
+        Text(
+            text = if (currentLanguage == AppLanguage.HINDI) "सहायता और समस्या निवारण" else "Help & Troubleshooting",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Card(shape = RoundedCornerShape(16.dp)) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = if (currentLanguage == AppLanguage.HINDI)
+                        "1. आस-पास के फ़ोन क्यों नहीं दिख रहे?"
+                    else
+                        "1. Why are nearby devices not showing up?",
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (currentLanguage == AppLanguage.HINDI)
+                        "दोनों फ़ोन में Wi-Fi चालू होना चाहिए। Android 12 और उससे पुराने फोन में Location/GPS चालू होना अनिवार्य है।"
+                    else
+                        "Both phones must have Wi-Fi enabled. On Android 12 and below, Location must be turned ON."
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MilestonePlaceholderScreen(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(text = title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = subtitle,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(onClick = onBack, shape = RoundedCornerShape(12.dp)) {
+            Icon(Icons.Default.ArrowBack, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("होम पर लौटें / Back")
+        }
+    }
+}
