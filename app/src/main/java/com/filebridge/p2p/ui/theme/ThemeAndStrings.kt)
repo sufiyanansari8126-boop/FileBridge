@@ -1,0 +1,174 @@
+package com.filebridge.p2p.ui.theme
+
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+
+object AppBranding {
+    const val APP_NAME = "FileBridge"
+    const val PACKAGE_NAME = "com.filebridge.p2p"
+    const val VERSION_NAME = "1.0.0 (Milestone 1)"
+
+    val PrimaryBlue = Color(0xFF2563EB)
+    val DeepIndigo = Color(0xFF4F46E5)
+    val VibrantPurple = Color(0xFF7C3AED)
+    val AccentCyan = Color(0xFF06B6D4)
+    val EmeraldSuccess = Color(0xFF10B981)
+    val AmberWarning = Color(0xFFF59E0B)
+    val RoseError = Color(0xFFF43F5E)
+
+    val PrimaryGradientBrush = Brush.linearGradient(
+        colors = listOf(PrimaryBlue, DeepIndigo, VibrantPurple)
+    )
+
+    val SendCardGradient = Brush.linearGradient(
+        colors = listOf(Color(0xFF2563EB), Color(0xFF4F46E5))
+    )
+
+    val ReceiveCardGradient = Brush.linearGradient(
+        colors = listOf(Color(0xFF7C3AED), Color(0xFF9333EA))
+    )
+}
+
+private val DarkColorPalette = darkColorScheme(
+    primary = Color(0xFF60A5FA),
+    onPrimary = Color(0xFF0F172A),
+    primaryContainer = Color(0xFF1E3A8A),
+    onPrimaryContainer = Color(0xFFDBEAFE),
+    secondary = Color(0xFFA78BFA),
+    onSecondary = Color(0xFF1E1B4B),
+    secondaryContainer = Color(0xFF4C1D95),
+    onSecondaryContainer = Color(0xFFEDE9FE),
+    background = Color(0xFF0B0F19),
+    onBackground = Color(0xFFF8FAFC),
+    surface = Color(0xFF151C2C),
+    onSurface = Color(0xFFF1F5F9),
+    surfaceVariant = Color(0xFF1E293B),
+    onSurfaceVariant = Color(0xFF94A3B8)
+)
+
+private val LightColorPalette = lightColorScheme(
+    primary = AppBranding.PrimaryBlue,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFDBEAFE),
+    onPrimaryContainer = Color(0xFF1E3A8A),
+    secondary = AppBranding.VibrantPurple,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFEDE9FE),
+    onSecondaryContainer = Color(0xFF4C1D95),
+    background = Color(0xFFF8FAFC),
+    onBackground = Color(0xFF0F172A),
+    surface = Color.White,
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF475569)
+)
+
+@Composable
+fun FileBridgeTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) {
+    val colorScheme = if (darkTheme) DarkColorPalette else LightColorPalette
+    MaterialTheme(
+        colorScheme = colorScheme,
+        content = content
+    )
+}
+
+enum class AppLanguage {
+    HINDI, ENGLISH
+}
+
+@Immutable
+data class LocalizedStrings(
+    val appTagline: String,
+    val introTitle: String,
+    val introSubtitle: String,
+    val getStartedBtn: String,
+    val sendButtonTitle: String,
+    val sendButtonSubtitle: String,
+    val receiveButtonTitle: String,
+    val receiveButtonSubtitle: String,
+    val navHome: String,
+    val navNearby: String,
+    val navHistory: String,
+    val navSettings: String,
+    val securityBadgeText: String,
+    val offlineReadyText: String,
+    val quickQrPair: String,
+    val deviceNameLabel: String,
+    val languageSettingTitle: String,
+    val themeSettingTitle: String,
+    val darkModeLabel: String,
+    val lightModeLabel: String,
+    val helpAndTroubleshooting: String,
+    val milestoneBannerTitle: String,
+    val milestoneBannerDesc: String
+)
+
+object AppStringsProvider {
+    val hindi = LocalizedStrings(
+        appTagline = "तेज़, सुरक्षित और बिना इंटरनेट फ़ाइल शेयरिंग",
+        introTitle = "FileBridge में आपका स्वागत है",
+        introSubtitle = "बिना इंटरनेट या मोबाइल डेटा खर्च किए, सीधे एक एंड्रॉइड फ़ोन से दूसरे फ़ोन में फ़ोटो, वीडियो और बड़ी फ़ाइलें सुरक्षित रूप से भेजें।",
+        getStartedBtn = "शुरू करें (Get Started)",
+        sendButtonTitle = "फ़ाइल भेजें (SEND)",
+        sendButtonSubtitle = "फ़ोटो, वीडियो, PDF या कोई भी फ़ाइल चुनें",
+        receiveButtonTitle = "प्राप्त करें (RECEIVE)",
+        receiveButtonSubtitle = "पास के फ़ोन से फ़ाइल लेने के लिए तैयार रहें",
+        navHome = "होम",
+        navNearby = "आस-पास",
+        navHistory = "इतिहास",
+        navSettings = "सेटिंग्स",
+        securityBadgeText = "AES-256 एन्क्रिप्टेड • SHA-256 सत्यापित",
+        offlineReadyText = "100% ऑफ़लाइन P2P (Wi-Fi Direct एवं QR)",
+        quickQrPair = "QR कोड से तुरंत जोड़ें",
+        deviceNameLabel = "आपका डिवाइस नाम:",
+        languageSettingTitle = "भाषा चुनें (Language)",
+        themeSettingTitle = "दिखावट (Theme Mode)",
+        darkModeLabel = "डार्क मोड (Dark)",
+        lightModeLabel = "लाइट मोड (Light)",
+        helpAndTroubleshooting = "सहायता और समस्या निवारण (Help)",
+        milestoneBannerTitle = "माइलस्टोन 1 सक्रिय है",
+        milestoneBannerDesc = "होम स्क्रीन, नेविगेशन, थीम और द्विभाषी इंजन तैयार है। अगले चरण में असली फ़ाइल पिकर और Wi-Fi Direct जुड़ेगा।"
+    )
+
+    val english = LocalizedStrings(
+        appTagline = "Fast, Secure & Offline P2P File Sharing",
+        introTitle = "Welcome to FileBridge",
+        introSubtitle = "Transfer photos, videos, and large files directly between Android devices without internet or mobile data.",
+        getStartedBtn = "Get Started",
+        sendButtonTitle = "SEND FILES",
+        sendButtonSubtitle = "Select photos, videos, PDFs, or any document",
+        receiveButtonTitle = "RECEIVE FILES",
+        receiveButtonSubtitle = "Make this phone visible to receive files",
+        navHome = "Home",
+        navNearby = "Nearby",
+        navHistory = "History",
+        navSettings = "Settings",
+        securityBadgeText = "AES-256 Encrypted • SHA-256 Verified",
+        offlineReadyText = "100% Offline P2P (Wi-Fi Direct & QR)",
+        quickQrPair = "Quick Connect via QR Code",
+        deviceNameLabel = "Your Device Name:",
+        languageSettingTitle = "Select Language",
+        themeSettingTitle = "Appearance (Theme Mode)",
+        darkModeLabel = "Dark Mode",
+        lightModeLabel = "Light Mode",
+        helpAndTroubleshooting = "Help & Troubleshooting",
+        milestoneBannerTitle = "Milestone 1 Active",
+        milestoneBannerDesc = "Home UI, navigation, theming, and bilingual engine are live. Next milestone adds real SAF file picker & Wi-Fi Direct."
+    )
+
+    fun get(language: AppLanguage): LocalizedStrings {
+        return when (language) {
+            AppLanguage.HINDI -> hindi
+            AppLanguage.ENGLISH -> english
+        }
+    }
+}
