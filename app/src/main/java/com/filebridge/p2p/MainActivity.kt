@@ -59,6 +59,8 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
 
+private const val MIME_ALL = "*/*"
+
 data class FileMeta(
     val uri: Uri,
     val name: String,
@@ -134,8 +136,13 @@ class MainActivity : ComponentActivity() {
         p2pState = "Scanning..."
         try {
             mgr.discoverPeers(ch, object : WifiP2pManager.ActionListener {
-                onSuccess() { p2pState = "Radar Active" }
-                onFailure(r) { p2pState = "Scan Error ($r)" }
+                override fun onSuccess() {
+                    p2pState = "Radar Active"
+                }
+
+                override fun onFailure(reason: Int) {
+                    p2pState = "Scan Error ($reason)"
+                }
             })
         } catch (_: Exception) {
             p2pState = "Permission Needed"
@@ -150,8 +157,13 @@ class MainActivity : ComponentActivity() {
         p2pState = "Connecting..."
         try {
             mgr.connect(ch, cfg, object : WifiP2pManager.ActionListener {
-                onSuccess() { p2pState = "Connected: ${device.deviceName}" }
-                onFailure(r) { p2pState = "Failed ($r)" }
+                override fun onSuccess() {
+                    p2pState = "Connected: ${device.deviceName}"
+                }
+
+                override fun onFailure(reason: Int) {
+                    p2pState = "Failed ($reason)"
+                }
             })
         } catch (_: Exception) {
             p2pState = "Error"
@@ -186,7 +198,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        registerReceiver(receiver, filter)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(receiver, filter)
+        }
     }
 
     override fun onPause() {
@@ -238,8 +254,6 @@ fun MainAppRoot(
         }
     }
 
-    // SAF Picker
-    const val MIME_ALL = "*/*"
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             hashing = true
@@ -739,4 +753,3 @@ fun getMyIp(): String {
     } catch (_: Exception) {}
     return ""
 }
-
