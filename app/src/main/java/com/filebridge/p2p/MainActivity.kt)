@@ -547,7 +547,7 @@ fun HomeScreenContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(18.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
