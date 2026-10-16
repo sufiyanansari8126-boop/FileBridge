@@ -1,13 +1,26 @@
 package com.filebridge.p2p
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,367 +37,372 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
-import com.filebridge.p2p.ui.theme.*
-import kotlinx.coroutines.delay
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
+import java.security.MessageDigest
 
-enum class AppScreen {
-    SPLASH,
-    INTRO,
-    HOME,
-    SEND_PREPARATION,
-    RECEIVE_PREPARATION,
-    NEARBY_DEVICES,
-    TRANSFER_HISTORY,
-    SETTINGS,
-    HELP
-}
+data class SelectedFileInfo(
+    val uri: Uri,
+    val name: String,
+    val sizeBytes: Long,
+    val sha256: String
+)
+
+data class TransferRecord(
+    val fileName: String,
+    val sizeText: String,
+    val direction: String, // "SENT" or "RECEIVED"
+    val verified: Boolean,
+    val pathOrNote: String
+)
 
 class MainActivity : ComponentActivity() {
+
+    private var wifiP2pManager: WifiP2pManager? = null
+    private var wifiChannel: WifiP2pManager.Channel? = null
+    private var p2pReceiver: BroadcastReceiver? = null
+
+    val nearbyPeers = mutableStateListOf<WifiP2pDevice>()
+    var p2pStatusText by mutableStateOf("P2P Ready")
+    var connectedHostIp by mutableStateOf("")
+    var isGroupOwner by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val defaultDeviceName = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+
+        wifiP2pManager = getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
+        wifiChannel = wifiP2pManager?.initialize(this, mainLooper, null)
 
         setContent {
-            var currentLanguage by remember { mutableStateOf(AppLanguage.HINDI) }
-            var isDarkMode by remember { mutableStateOf(true) }
-            var showFirstTimeIntro by remember { mutableStateOf(true) }
-            var currentScreen by remember { mutableStateOf(AppScreen.SPLASH) }
-            var customDeviceName by remember { mutableStateOf(defaultDeviceName) }
+            var isDarkTheme by remember { mutableStateOf(true) }
+            var isHindi by remember { mutableStateOf(true) }
 
-            // Milestone 2: File States (Uri, Name, Size)
-            var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
-            var selectedFileName by remember { mutableStateOf<String?>(null) }
-            var selectedFileSize by remember { mutableStateOf<String?>(null) }
-
-            val strings = AppStringsProvider.get(currentLanguage)
-
-            // SAF File Picker Launcher
-            val filePickerLauncher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.OpenDocument()
-            ) { uri: Uri? ->
-                uri?.let {
-                    selectedFileUri = it
-                    val docFile = DocumentFile.fromSingleUri(this, it)
-                    selectedFileName = docFile?.name ?: "Unknown_File"
-                    val sizeBytes = docFile?.length() ?: 0L
-                    selectedFileSize = formatFileSize(sizeBytes)
-                }
+            val colorScheme = if (isDarkTheme) {
+                darkColorScheme(
+                    primary = Color(0xFF6366F1),
+                    secondary = Color(0xFFA855F7),
+                    background = Color(0xFF0B0F19),
+                    surface = Color(0xFF161F30),
+                    onBackground = Color.White,
+                    onSurface = Color.White,
+                    onSurfaceVariant = Color(0xFF94A3B8)
+                )
+            } else {
+                lightColorScheme(
+                    primary = Color(0xFF4F46E5),
+                    secondary = Color(0xFF9333EA),
+                    background = Color(0xFFF8FAFC),
+                    surface = Color.White,
+                    onBackground = Color(0xFF0F172A),
+                    onSurface = Color(0xFF0F172A),
+                    onSurfaceVariant = Color(0xFF475569)
+                )
             }
 
-            LaunchedEffect(Unit) {
-                delay(1400)
-                currentScreen = if (showFirstTimeIntro) AppScreen.INTRO else AppScreen.HOME
-            }
-
-            FileBridgeTheme(darkTheme = isDarkMode) {
+            MaterialTheme(colorScheme = colorScheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    when (currentScreen) {
-                        AppScreen.SPLASH -> SplashScreen(strings)
-                        AppScreen.INTRO -> FirstTimeIntroScreen(
-                            strings = strings,
-                            currentLanguage = currentLanguage,
-                            onLanguageToggle = {
-                                currentLanguage = if (currentLanguage == AppLanguage.HINDI) AppLanguage.ENGLISH else AppLanguage.HINDI
-                            },
-                            onContinue = {
-                                showFirstTimeIntro = false
-                                currentScreen = AppScreen.HOME
+                    SafeP2PMainApp(
+                        isDarkTheme = isDarkTheme,
+                        onToggleTheme = { isDarkTheme = !isDarkTheme },
+                        isHindi = isHindi,
+                        onToggleLang = { isHindi = !isHindi },
+                        peers = nearbyPeers,
+                        p2pStatus = p2pStatusText,
+                        detectedHostIp = connectedHostIp,
+                        isGroupOwner = isGroupOwner,
+                        onStartDiscovery = { startPeerDiscovery() },
+                        onConnectPeer = { device -> connectToPeer(device) }
+                    )
+                }
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startPeerDiscovery() {
+        val manager = wifiP2pManager ?: return
+        val channel = wifiChannel ?: return
+        p2pStatusText = "Scanning..."
+        try {
+            manager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    p2pStatusText = "Radar Active"
+                }
+
+                override fun onFailure(reason: Int) {
+                    p2pStatusText = "Scan Mode ($reason)"
+                }
+            })
+        } catch (e: Exception) {
+            p2pStatusText = "Permission Needed"
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectToPeer(device: WifiP2pDevice) {
+        val manager = wifiP2pManager ?: return
+        val channel = wifiChannel ?: return
+        val config = WifiP2pConfig().apply {
+            deviceAddress = device.deviceAddress
+        }
+        p2pStatusText = "Connecting: ${device.deviceName}"
+        try {
+            manager.connect(channel, config, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    p2pStatusText = "Connected: ${device.deviceName}"
+                }
+
+                override fun onFailure(reason: Int) {
+                    p2pStatusText = "Conn Failed ($reason)"
+                }
+            })
+        } catch (e: Exception) {
+            p2pStatusText = "Conn Error"
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val filter = IntentFilter().apply {
+            addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
+        }
+        p2pReceiver = object : BroadcastReceiver() {
+            @SuppressLint("MissingPermission")
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
+                        val manager = wifiP2pManager ?: return
+                        val channel = wifiChannel ?: return
+                        try {
+                            manager.requestPeers(channel) { peerList ->
+                                nearbyPeers.clear()
+                                nearbyPeers.addAll(peerList.deviceList)
                             }
-                        )
-                        else -> MainScaffoldContainer(
-                            currentScreen = currentScreen,
-                            onNavigate = { currentScreen = it },
-                            strings = strings,
-                            currentLanguage = currentLanguage,
-                            onLanguageChange = { currentLanguage = it },
-                            isDarkMode = isDarkMode,
-                            onThemeToggle = { isDarkMode = it },
-                            deviceName = customDeviceName,
-                            onDeviceNameChange = { customDeviceName = it },
-                            selectedFileName = selectedFileName,
-                            selectedFileSize = selectedFileSize,
-                            onPickFileClick = {
-                                filePickerLauncher.launch(arrayOf("*/*"))
+                        } catch (_: Exception) {}
+                    }
+                    WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                        val manager = wifiP2pManager ?: return
+                        val channel = wifiChannel ?: return
+                        try {
+                            manager.requestConnectionInfo(channel) { info ->
+                                if (info != null && info.groupFormed) {
+                                    connectedHostIp = info.groupOwnerAddress?.hostAddress ?: ""
+                                    isGroupOwner = info.isGroupOwner
+                                    p2pStatusText = if (info.isGroupOwner) "Host Ready" else "Linked to Host"
+                                }
                             }
-                        )
+                        } catch (_: Exception) {}
                     }
                 }
             }
         }
+        registerReceiver(p2pReceiver, filter)
     }
-}
 
-fun formatFileSize(sizeBytes: Long): String {
-    if (sizeBytes <= 0) return "0 KB"
-    val kb = sizeBytes / 1024.0
-    val mb = kb / 1024.0
-    val gb = mb / 1024.0
-    return when {
-        gb >= 1.0 -> String.format("%.2f GB", gb)
-        mb >= 1.0 -> String.format("%.2f MB", mb)
-        kb >= 1.0 -> String.format("%.2f KB", kb)
-        else -> "$sizeBytes Bytes"
-    }
-}
-
-@Composable
-fun SplashScreen(strings: LocalizedStrings) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AppBranding.PrimaryGradientBrush),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(24.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(Color.White.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SwapHoriz,
-                    contentDescription = AppBranding.APP_NAME,
-                    tint = Color.White,
-                    modifier = Modifier.size(56.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                text = AppBranding.APP_NAME,
-                fontSize = 34.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = strings.appTagline,
-                fontSize = 15.sp,
-                color = Color.White.copy(alpha = 0.85f),
-                textAlign = TextAlign.Center
-            )
+    override fun onPause() {
+        super.onPause()
+        p2pReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
         }
     }
 }
 
 @Composable
-fun FirstTimeIntroScreen(
-    strings: LocalizedStrings,
-    currentLanguage: AppLanguage,
-    onLanguageToggle: () -> Unit,
-    onContinue: () -> Unit
+fun SafeP2PMainApp(
+    isDarkTheme: Boolean,
+    onToggleTheme: () -> Unit,
+    isHindi: Boolean,
+    onToggleLang: () -> Unit,
+    peers: List<WifiP2pDevice>,
+    p2pStatus: String,
+    detectedHostIp: String,
+    isGroupOwner: Boolean,
+    onStartDiscovery: () -> Unit,
+    onConnectPeer: (WifiP2pDevice) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
-        horizontalAlignment = Alignment.CenterHorizontally
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var currentScreen by remember { mutableStateOf("HOME") }
+    var selectedFile by remember { mutableStateOf<SelectedFileInfo?>(null) }
+    var isHashing by remember { mutableStateOf(false) }
+
+    // Milestone 4 Transfer States
+    var targetIpInput by remember(detectedHostIp) {
+        mutableStateOf(if (detectedHostIp.isNotEmpty()) detectedHostIp else "192.168.49.1")
+    }
+    var transferProgress by remember { mutableStateOf(0f) }
+    var transferStatus by remember { mutableStateOf("") }
+    var transferSpeed by remember { mutableStateOf("") }
+    var isTransferring by remember { mutableStateOf(false) }
+    var isReceivingServerOn by remember { mutableStateOf(false) }
+
+    val historyList = remember { mutableStateListOf<TransferRecord>() }
+
+    // Permissions Launcher for Milestone 3 Wi-Fi Direct
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
-        ) {
-            OutlinedButton(
-                onClick = onLanguageToggle,
-                shape = RoundedCornerShape(50)
-            ) {
-                Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(if (currentLanguage == AppLanguage.HINDI) "English" else "हिंदी")
-            }
+        onStartDiscovery()
+    }
+
+    fun requestP2pPermissionsAndScan() {
+        val perms = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= 33) {
+            perms.add("android.permission.NEARBY_WIFI_DEVICES")
         }
-
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(110.dp)
-                    .clip(CircleShape)
-                    .background(AppBranding.PrimaryGradientBrush),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.WifiTethering,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(54.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(28.dp))
-            Text(
-                text = strings.introTitle,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = strings.introSubtitle,
-                fontSize = 16.sp,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 24.sp
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.VerifiedUser,
-                        contentDescription = null,
-                        tint = AppBranding.EmeraldSuccess
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = strings.securityBadgeText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
+        val allGranted = perms.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
-
-        Button(
-            onClick = onContinue,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-            shape = RoundedCornerShape(18.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AppBranding.PrimaryBlue)
-        ) {
-            Text(
-                text = strings.getStartedBtn,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.White)
+        if (allGranted) {
+            onStartDiscovery()
+        } else {
+            permissionLauncher.launch(perms.toTypedArray())
         }
     }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MainScaffoldContainer(
-    currentScreen: AppScreen,
-    onNavigate: (AppScreen) -> Unit,
-    strings: LocalizedStrings,
-    currentLanguage: AppLanguage,
-    onLanguageChange: (AppLanguage) -> Unit,
-    isDarkMode: Boolean,
-    onThemeToggle: (Boolean) -> Unit,
-    deviceName: String,
-    onDeviceNameChange: (String) -> Unit,
-    selectedFileName: String?,
-    selectedFileSize: String?,
-    onPickFileClick: () -> Unit
-) {
+    // Milestone 2 SAF File Picker Launcher
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isHashing = true
+            currentScreen = "SEND"
+            scope.launch {
+                val info = extractFileDetailsAndHash(context, uri)
+                selectedFile = info
+                isHashing = false
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(AppBranding.PrimaryGradientBrush),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SwapHoriz,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = AppBranding.APP_NAME,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 19.sp
-                            )
-                            Text(
-                                text = strings.offlineReadyText,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    TextButton(
-                        onClick = {
-                            onLanguageChange(
-                                if (currentLanguage == AppLanguage.HINDI) AppLanguage.ENGLISH else AppLanguage.HINDI
-                            )
-                        }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF6366F1), Color(0xFFA855F7))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (currentLanguage == AppLanguage.HINDI) "EN" else "हिंदी",
-                            fontWeight = FontWeight.Bold
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            tint = Color.White
                         )
                     }
-                    IconButton(onClick = { onThemeToggle(!isDarkMode) }) {
-                        Icon(
-                            imageVector = if (isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Toggle Theme"
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Safe P2P India",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (isHindi) "100% ऑफ़लाइन P2P (Milestone 2-4 सक्रिय)" else "100% Offline P2P (Milestones 2-4 Active)",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-            )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onToggleLang) {
+                        Text(
+                            text = if (isHindi) "EN" else "हिंदी",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.Info else Icons.Default.CheckCircle,
+                            contentDescription = "Theme",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
                 NavigationBarItem(
-                    selected = currentScreen == AppScreen.HOME ||
-                            currentScreen == AppScreen.SEND_PREPARATION ||
-                            currentScreen == AppScreen.RECEIVE_PREPARATION,
-                    onClick = { onNavigate(AppScreen.HOME) },
-                    icon = { Icon(Icons.Default.Home, contentDescription = strings.navHome) },
-                    label = { Text(strings.navHome) }
+                    selected = currentScreen == "HOME" || currentScreen == "SEND" || currentScreen == "RECEIVE",
+                    onClick = { currentScreen = "HOME" },
+                    icon = { Icon(Icons.Default.Home, contentDescription = null) },
+                    label = { Text(if (isHindi) "होम" else "Home") }
                 )
                 NavigationBarItem(
-                    selected = currentScreen == AppScreen.NEARBY_DEVICES,
-                    onClick = { onNavigate(AppScreen.NEARBY_DEVICES) },
-                    icon = { Icon(Icons.Default.Radar, contentDescription = strings.navNearby) },
-                    label = { Text(strings.navNearby) }
+                    selected = currentScreen == "NEARBY",
+                    onClick = {
+                        currentScreen = "NEARBY"
+                        requestP2pPermissionsAndScan()
+                    },
+                    icon = { Icon(Icons.Default.Place, contentDescription = null) },
+                    label = { Text(if (isHindi) "आस-पास" else "Nearby") }
                 )
                 NavigationBarItem(
-                    selected = currentScreen == AppScreen.TRANSFER_HISTORY,
-                    onClick = { onNavigate(AppScreen.TRANSFER_HISTORY) },
-                    icon = { Icon(Icons.Default.History, contentDescription = strings.navHistory) },
-                    label = { Text(strings.navHistory) }
+                    selected = currentScreen == "HISTORY",
+                    onClick = { currentScreen = "HISTORY" },
+                    icon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                    label = { Text(if (isHindi) "इतिहास" else "History") }
                 )
                 NavigationBarItem(
-                    selected = currentScreen == AppScreen.SETTINGS || currentScreen == AppScreen.HELP,
-                    onClick = { onNavigate(AppScreen.SETTINGS) },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = strings.navSettings) },
-                    label = { Text(strings.navSettings) }
+                    selected = currentScreen == "SETTINGS",
+                    onClick = { currentScreen = "SETTINGS" },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = { Text(if (isHindi) "सेटिंग्स" else "Settings") }
                 )
             }
         }
@@ -395,66 +413,134 @@ fun MainScaffoldContainer(
                 .padding(innerPadding)
         ) {
             when (currentScreen) {
-                AppScreen.HOME -> HomeScreenContent(
-                    strings = strings,
-                    deviceName = deviceName,
+                "HOME" -> HomeScreenContent(
+                    isHindi = isHindi,
+                    p2pStatus = p2pStatus,
+                    selectedFile = selectedFile,
                     onSendClick = {
-                        onPickFileClick()
-                        onNavigate(AppScreen.SEND_PREPARATION)
+                        currentScreen = "SEND"
+                        filePickerLauncher.launch(arrayOf("*/*"))
                     },
-                    onReceiveClick = { onNavigate(AppScreen.RECEIVE_PREPARATION) },
-                    onNearbyClick = { onNavigate(AppScreen.NEARBY_DEVICES) }
+                    onReceiveClick = {
+                        currentScreen = "RECEIVE"
+                    },
+                    onNearbyClick = {
+                        currentScreen = "NEARBY"
+                        requestP2pPermissionsAndScan()
+                    }
                 )
-                AppScreen.SEND_PREPARATION -> SendPreparationScreen(
-                    strings = strings,
-                    currentLanguage = currentLanguage,
-                    fileName = selectedFileName,
-                    fileSize = selectedFileSize,
-                    onSelectAnother = onPickFileClick,
-                    onBack = { onNavigate(AppScreen.HOME) }
+
+                "SEND" -> SendFileScreenM2ToM4(
+                    isHindi = isHindi,
+                    selectedFile = selectedFile,
+                    isHashing = isHashing,
+                    targetIp = targetIpInput,
+                    onTargetIpChange = { targetIpInput = it },
+                    peers = peers,
+                    onPickFile = { filePickerLauncher.launch(arrayOf("*/*")) },
+                    onScanPeers = { requestP2pPermissionsAndScan() },
+                    onConnectPeer = onConnectPeer,
+                    isTransferring = isTransferring,
+                    progress = transferProgress,
+                    statusText = transferStatus,
+                    speedText = transferSpeed,
+                    onStartSendSocket = {
+                        val fileToSend = selectedFile ?: return@SendFileScreenM2ToM4
+                        if (isTransferring) return@SendFileScreenM2ToM4
+                        isTransferring = true
+                        transferProgress = 0f
+                        transferStatus = if (isHindi) "कनेक्ट हो रहा है..." else "Connecting..."
+                        scope.launch {
+                            sendFileOverSocket(
+                                context = context,
+                                fileInfo = fileToSend,
+                                hostIp = targetIpInput.trim(),
+                                port = 8988,
+                                onProgress = { prog, spd, msg ->
+                                    transferProgress = prog
+                                    transferSpeed = spd
+                                    transferStatus = msg
+                                },
+                                onComplete = { success, msg ->
+                                    isTransferring = false
+                                    transferStatus = msg
+                                    if (success) {
+                                        historyList.add(
+                                            0,
+                                            TransferRecord(
+                                                fileName = fileToSend.name,
+                                                sizeText = formatFileSize(fileToSend.sizeBytes),
+                                                direction = "SENT",
+                                                verified = true,
+                                                pathOrNote = "Sent to $targetIpInput"
+                                            )
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    },
+                    onBack = { currentScreen = "HOME" }
                 )
-                AppScreen.RECEIVE_PREPARATION -> MilestonePlaceholderScreen(
-                    title = strings.receiveButtonTitle,
-                    subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "यह स्क्रीन Milestone 3 में आपके फ़ोन पर लोकल Wi-Fi Direct रिसीवर और QR कोड चालू करेगी।"
-                    else
-                        "This screen activates the local Wi-Fi Direct receiver in Milestone 3.",
-                    icon = Icons.Default.Download,
-                    onBack = { onNavigate(AppScreen.HOME) }
+
+                "RECEIVE" -> ReceiveFileScreenM3ToM4(
+                    isHindi = isHindi,
+                    localIp = getLocalIpAddress().ifEmpty { "192.168.49.1" },
+                    p2pStatus = p2pStatus,
+                    isServerRunning = isReceivingServerOn,
+                    progress = transferProgress,
+                    statusText = transferStatus,
+                    speedText = transferSpeed,
+                    onStartServer = {
+                        if (isReceivingServerOn) return@ReceiveFileScreenM3ToM4
+                        requestP2pPermissionsAndScan()
+                        isReceivingServerOn = true
+                        transferProgress = 0f
+                        transferStatus = if (isHindi) "पोर्ट 8988 पर फ़ाइल की प्रतीक्षा में..." else "Waiting for file on Port 8988..."
+                        scope.launch {
+                            receiveFileServerSocket(
+                                context = context,
+                                port = 8988,
+                                onProgress = { prog, spd, msg ->
+                                    transferProgress = prog
+                                    transferSpeed = spd
+                                    transferStatus = msg
+                                },
+                                onComplete = { success, record, msg ->
+                                    isReceivingServerOn = false
+                                    transferStatus = msg
+                                    if (success && record != null) {
+                                        historyList.add(0, record)
+                                    }
+                                }
+                            )
+                        }
+                    },
+                    onBack = { currentScreen = "HOME" }
                 )
-                AppScreen.NEARBY_DEVICES -> MilestonePlaceholderScreen(
-                    title = strings.navNearby,
-                    subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "Milestone 3 में यहाँ WifiP2pManager के ज़रिए आस-पास के असली एंड्रॉइड फ़ोनों की लाइव सूची दिखेगी।"
-                    else
-                        "In Milestone 3, real nearby Android devices discovered via WifiP2pManager will appear here.",
-                    icon = Icons.Default.Radar,
-                    onBack = { onNavigate(AppScreen.HOME) }
+
+                "NEARBY" -> NearbyPeersScreenM3(
+                    isHindi = isHindi,
+                    peers = peers,
+                    p2pStatus = p2pStatus,
+                    detectedHostIp = detectedHostIp,
+                    isGroupOwner = isGroupOwner,
+                    onRescan = { requestP2pPermissionsAndScan() },
+                    onConnectPeer = onConnectPeer,
+                    onGoSend = { currentScreen = "SEND" },
+                    onGoReceive = { currentScreen = "RECEIVE" }
                 )
-                AppScreen.TRANSFER_HISTORY -> MilestonePlaceholderScreen(
-                    title = strings.navHistory,
-                    subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "Milestone 6 में यहाँ Room Database से भेजी और प्राप्त की गई फ़ाइलों का पूरा रिकॉर्ड दिखेगा।"
-                    else
-                        "In Milestone 6, sent and received file history will appear here.",
-                    icon = Icons.Default.History,
-                    onBack = { onNavigate(AppScreen.HOME) }
+
+                "HISTORY" -> HistoryScreenM4(
+                    isHindi = isHindi,
+                    records = historyList,
+                    onBack = { currentScreen = "HOME" }
                 )
-                AppScreen.SETTINGS -> SettingsScreenContent(
-                    strings = strings,
-                    currentLanguage = currentLanguage,
-                    onLanguageChange = onLanguageChange,
-                    isDarkMode = isDarkMode,
-                    onThemeToggle = onThemeToggle,
-                    deviceName = deviceName,
-                    onDeviceNameChange = onDeviceNameChange,
-                    onOpenHelp = { onNavigate(AppScreen.HELP) }
+
+                "SETTINGS" -> SettingsScreenInfo(
+                    isHindi = isHindi,
+                    onBack = { currentScreen = "HOME" }
                 )
-                AppScreen.HELP -> HelpScreenContent(
-                    currentLanguage = currentLanguage,
-                    onBack = { onNavigate(AppScreen.SETTINGS) }
-                )
-                else -> {}
             }
         }
     }
@@ -462,8 +548,9 @@ fun MainScaffoldContainer(
 
 @Composable
 fun HomeScreenContent(
-    strings: LocalizedStrings,
-    deviceName: String,
+    isHindi: Boolean,
+    p2pStatus: String,
+    selectedFile: SelectedFileInfo?,
     onSendClick: () -> Unit,
     onReceiveClick: () -> Unit,
     onNearbyClick: () -> Unit
@@ -472,217 +559,523 @@ fun HomeScreenContent(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Card(
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        // Device Info Banner
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Phone,
+                    contentDescription = null,
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = if (isHindi) "आपका डिवाइस नाम:" else "Your Device Name:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${Build.MANUFACTURER.uppercase()} ${Build.MODEL}",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF064E3B))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = p2pStatus,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF34D399)
+                )
+            }
+        }
+
+        // SEND CARD (Milestone 2 + 4)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF3B82F6), Color(0xFF4F46E5))
+                    )
+                )
+                .clickable { onSendClick() }
+                .padding(24.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Smartphone,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = strings.deviceNameLabel,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = deviceName,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = AppBranding.EmeraldSuccess.copy(alpha = 0.15f)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "P2P Ready",
-                        color = AppBranding.EmeraldSuccess,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        text = if (isHindi) "फ़ाइल भेजें\n(SEND)" else "SEND FILE",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        lineHeight = 32.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (isHindi)
+                            "असली फ़ाइल पिकर (SAF) खोलें — फ़ोटो, वीडियो, PDF या APK चुनें"
+                        else
+                            "Open SAF File Picker — Choose Photo, Video, PDF or APK",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Send,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp)
                     )
                 }
             }
         }
 
-        HeroActionCard(
-            title = strings.sendButtonTitle,
-            subtitle = strings.sendButtonSubtitle,
-            icon = Icons.Default.Upload,
-            gradient = AppBranding.SendCardGradient,
-            onClick = onSendClick
-        )
-
-        HeroActionCard(
-            title = strings.receiveButtonTitle,
-            subtitle = strings.receiveButtonSubtitle,
-            icon = Icons.Default.Download,
-            gradient = AppBranding.ReceiveCardGradient,
-            onClick = onReceiveClick
-        )
-
-        OutlinedCard(
-            onClick = onNearbyClick,
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth()
+        // RECEIVE CARD (Milestone 3 + 4)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF9333EA), Color(0xFF7E22CE))
+                    )
+                )
+                .clickable { onReceiveClick() }
+                .padding(24.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isHindi) "प्राप्त करें\n(RECEIVE)" else "RECEIVE FILE",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        lineHeight = 32.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (isHindi)
+                            "ServerSocket चालू करें और पास के फ़ोन से तुरंत फ़ाइल प्राप्त करें"
+                        else
+                            "Start ServerSocket to receive files from nearby device",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+                }
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.2f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
+                        imageVector = Icons.Default.Add,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
+            }
+        }
+
+        // Selected File Quick Preview if already picked
+        if (selectedFile != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, Color(0xFF6366F1), RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = if (isHindi) "चुनी गई फ़ाइल (भेजने के लिए तैयार):" else "Selected File (Ready to Send):",
+                    fontSize = 12.sp,
+                    color = Color(0xFF38BDF8),
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${selectedFile.name} (${formatFileSize(selectedFile.sizeBytes)})",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "SHA-256: ${selectedFile.sha256.take(24)}...",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Wi-Fi Direct Radar Card
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .clickable { onNearbyClick() }
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E3A8A)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Place,
+                        contentDescription = null,
+                        tint = Color(0xFF60A5FA)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column {
                     Text(
-                        text = strings.quickQrPair,
+                        text = if (isHindi) "आस-पास के फ़ोन खोजें (Wi-Fi Direct)" else "Scan Nearby Phones (Wi-Fi Direct)",
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = strings.securityBadgeText,
+                        text = if (isHindi) "Milestone 3 रडार • बिना इंटरनेट कनेक्ट करें" else "Milestone 3 Radar • Connect Offline",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Icon(
-                    imageVector = Icons.Default.ChevronRight,
-                    contentDescription = null
+            }
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Milestone Status Card (Updated to Milestone 2, 3 & 4 Active!)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xFF1E1B4B))
+                .border(1.dp, Color(0xFF4F46E5), RoundedCornerShape(18.dp))
+                .padding(16.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                imageVector = Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = Color(0xFF34D399),
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = if (isHindi) "माइलस्टोन 2, 3 और 4 सक्रिय हैं ✅" else "Milestones 2, 3 & 4 Active ✅",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isHindi)
+                        "असली SAF फ़ाइल पिकर, SHA-256 हैश, Wi-Fi Direct डिवाइस स्कैनर और Socket फ़ाइल ट्रांसफर पूरी तरह जुड़ चुके हैं!"
+                    else
+                        "Real SAF File Picker, SHA-256 Hash, Wi-Fi Direct Scanner & Socket File Transfer are now live!",
+                    fontSize = 13.sp,
+                    color = Color(0xFFC7D2FE)
                 )
             }
         }
     }
 }
 
-/**
- * Milestone 2: Send Preparation Screen with Real File Info
- */
 @Composable
-fun SendPreparationScreen(
-    strings: LocalizedStrings,
-    currentLanguage: AppLanguage,
-    fileName: String?,
-    fileSize: String?,
-    onSelectAnother: () -> Unit,
+fun SendFileScreenM2ToM4(
+    isHindi: Boolean,
+    selectedFile: SelectedFileInfo?,
+    isHashing: Boolean,
+    targetIp: String,
+    onTargetIpChange: (String) -> Unit,
+    peers: List<WifiP2pDevice>,
+    onPickFile: () -> Unit,
+    onScanPeers: () -> Unit,
+    onConnectPeer: (WifiP2pDevice) -> Unit,
+    isTransferring: Boolean,
+    progress: Float,
+    statusText: String,
+    speedText: String,
+    onStartSendSocket: () -> Unit,
     onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Row(
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                text = if (isHindi) "फ़ाइल भेजें (Milestone 2-4)" else "Send File (Milestone 2-4)",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // Step 1: Pick File Button (Milestone 2)
+        Button(
+            onClick = onPickFile,
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5))
         ) {
-            TextButton(onClick = onBack) {
-                Icon(Icons.Default.ArrowBack, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(if (currentLanguage == AppLanguage.HINDI) "वापस जाएं" else "Back")
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (selectedFile == null) {
+                    if (isHindi) "फ़ोन से फ़ाइल चुनें (Open SAF Picker)" else "Pick File from Phone"
+                } else {
+                    if (isHindi) "दूसरी फ़ाइल बदलें (Change File)" else "Change Selected File"
+                },
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        if (isHashing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isHindi) "फ़ाइल का आकार और SHA-256 सुरक्षा कोड निकाला जा रहा है..." else "Calculating file size & SHA-256 hash...",
+                    color = Color(0xFF38BDF8)
+                )
             }
         }
 
-        Text(
-            text = if (currentLanguage == AppLanguage.HINDI) "फ़ाइल भेजने की तैयारी" else "Send File Preparation",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
+        // Selected File Details Card
+        if (selectedFile != null) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(AppBranding.PrimaryBlue.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
+                Text(
+                    text = if (isHindi) "📄 चुनी गई फ़ाइल का विवरण:" else "📄 Selected File Info:",
+                    fontSize = 13.sp,
+                    color = Color(0xFF38BDF8),
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = selectedFile.name,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = (if (isHindi) "आकार (Size): " else "Size: ") + formatFileSize(selectedFile.sizeBytes),
+                    fontSize = 14.sp,
+                    color = Color(0xFF34D399),
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "SHA-256: ${selectedFile.sha256}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Step 2: Receiver Connection & IP (Milestone 3 + 4)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isHindi) "📡 रिसीवर फ़ोन से जुड़ें:" else "📡 Connect to Receiver:",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = onScanPeers) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isHindi) "स्कैन करें" else "Scan")
+                }
+            }
+
+            if (peers.isNotEmpty()) {
+                peers.forEach { device ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1E293B))
+                            .clickable { onConnectPeer(device) }
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = device.deviceName.ifEmpty { "Android Device" },
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = device.deviceAddress,
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                        Text(
+                            text = if (isHindi) "जोड़ें (Connect)" else "Connect",
+                            color = Color(0xFF38BDF8),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = targetIp,
+                onValueChange = onTargetIpChange,
+                label = {
+                    Text(if (isHindi) "रिसीवर का IP पता (डिफ़ॉल्ट 192.168.49.1)" else "Receiver IP Address")
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // Step 3: Transfer Progress & Send Button (Milestone 4)
+        if (statusText.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.InsertDriveFile,
-                        contentDescription = null,
-                        tint = AppBranding.PrimaryBlue,
-                        modifier = Modifier.size(36.dp)
+                    Text(
+                        text = "${(progress * 100).toInt()}%",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8)
+                    )
+                    Text(
+                        text = speedText,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF34D399)
                     )
                 }
-                Spacer(modifier = Modifier.height(14.dp))
+                // Custom Gradient Progress Bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(Color(0xFF334155))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFF3B82F6), Color(0xFF10B981))
+                                )
+                            )
+                    )
+                }
                 Text(
-                    text = fileName ?: (if (currentLanguage == AppLanguage.HINDI) "कोई फ़ाइल नहीं चुनी गई" else "No file selected"),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = fileSize ?: "0 KB",
+                    text = statusText,
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(18.dp))
-                OutlinedButton(
-                    onClick = onSelectAnother,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (currentLanguage == AppLanguage.HINDI) "दूसरी फ़ाइल चुनें" else "Pick Another File")
-                }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
         Button(
-            onClick = {},
+            onClick = onStartSendSocket,
+            enabled = selectedFile != null && !isTransferring,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AppBranding.PrimaryBlue)
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
         ) {
-            Icon(Icons.Default.Radar, contentDescription = null)
+            Icon(Icons.Default.Send, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (currentLanguage == AppLanguage.HINDI) "आस-पास के डिवाइस खोजें (Search Nearby)" else "Scan Nearby Devices",
+                text = if (isHindi) "असली फ़ाइल भेजें (Start Socket Transfer)" else "Send File Now",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -691,219 +1084,554 @@ fun SendPreparationScreen(
 }
 
 @Composable
-fun HeroActionCard(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    gradient: Brush,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(26.dp))
-            .background(gradient)
-            .clickable(onClick = onClick)
-            .padding(24.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = subtitle,
-                    fontSize = 14.sp,
-                    color = Color.White.copy(alpha = 0.9f),
-                    lineHeight = 20.sp
-                )
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.22f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = title,
-                    tint = Color.White,
-                    modifier = Modifier.size(34.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun SettingsScreenContent(
-    strings: LocalizedStrings,
-    currentLanguage: AppLanguage,
-    onLanguageChange: (AppLanguage) -> Unit,
-    isDarkMode: Boolean,
-    onThemeToggle: (Boolean) -> Unit,
-    deviceName: String,
-    onDeviceNameChange: (String) -> Unit,
-    onOpenHelp: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            text = strings.navSettings,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        OutlinedTextField(
-            value = deviceName,
-            onValueChange = onDeviceNameChange,
-            label = { Text(strings.deviceNameLabel) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp)
-        )
-
-        Card(shape = RoundedCornerShape(16.dp)) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = strings.languageSettingTitle, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FilterChip(
-                        selected = currentLanguage == AppLanguage.HINDI,
-                        onClick = { onLanguageChange(AppLanguage.HINDI) },
-                        label = { Text("हिंदी (डिफ़ॉल्ट)") }
-                    )
-                    FilterChip(
-                        selected = currentLanguage == AppLanguage.ENGLISH,
-                        onClick = { onLanguageChange(AppLanguage.ENGLISH) },
-                        label = { Text("English") }
-                    )
-                }
-            }
-        }
-
-        Card(shape = RoundedCornerShape(16.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(text = strings.themeSettingTitle, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = if (isDarkMode) strings.darkModeLabel else strings.lightModeLabel,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(checked = isDarkMode, onCheckedChange = onThemeToggle)
-            }
-        }
-
-        OutlinedButton(
-            onClick = onOpenHelp,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Icon(Icons.Default.HelpOutline, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(strings.helpAndTroubleshooting)
-        }
-    }
-}
-
-@Composable
-fun HelpScreenContent(
-    currentLanguage: AppLanguage,
+fun ReceiveFileScreenM3ToM4(
+    isHindi: Boolean,
+    localIp: String,
+    p2pStatus: String,
+    isServerRunning: Boolean,
+    progress: Float,
+    statusText: String,
+    speedText: String,
+    onStartServer: () -> Unit,
     onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+            }
+            Text(
+                text = if (isHindi) "फ़ाइल प्राप्त करें (Milestone 3-4)" else "Receive File (Milestone 3-4)",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, Color(0xFFA855F7), RoundedCornerShape(20.dp))
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = if (isHindi) "आपका रिसीवर IP पता (दूसरे फ़ोन में डालें):" else "Your Receiver IP Address:",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = localIp,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF38BDF8)
+            )
+            Text(
+                text = "TCP Port: 8988 • Status: $p2pStatus",
+                fontSize = 12.sp,
+                color = Color(0xFF34D399)
+            )
+        }
+
+        Button(
+            onClick = onStartServer,
+            enabled = !isServerRunning,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9333EA))
+        ) {
+            Icon(Icons.Default.CheckCircle, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isServerRunning) {
+                    if (isHindi) "रिसीवर चालू है (प्रतीक्षा में...)" else "Receiver Active (Waiting...)"
+                } else {
+                    if (isHindi) "रिसीवर सर्वर चालू करें (Start Receiver)" else "Start Receiver Server"
+                },
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        if (statusText.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${(progress * 100).toInt()}%",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFA855F7)
+                    )
+                    Text(
+                        text = speedText,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF34D399)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(Color(0xFF334155))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFFA855F7), Color(0xFF38BDF8))
+                                )
+                            )
+                    )
+                }
+                Text(
+                    text = statusText,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun NearbyPeersScreenM3(
+    isHindi: Boolean,
+    peers: List<WifiP2pDevice>,
+    p2pStatus: String,
+    detectedHostIp: String,
+    isGroupOwner: Boolean,
+    onRescan: () -> Unit,
+    onConnectPeer: (WifiP2pDevice) -> Unit,
+    onGoSend: () -> Unit,
+    onGoReceive: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        TextButton(onClick = onBack) {
-            Icon(Icons.Default.ArrowBack, contentDescription = null)
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(if (currentLanguage == AppLanguage.HINDI) "वापस जाएं" else "Back")
-        }
-        Text(
-            text = if (currentLanguage == AppLanguage.HINDI) "सहायता और समस्या निवारण" else "Help & Troubleshooting",
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Card(shape = RoundedCornerShape(16.dp)) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
                 Text(
-                    text = if (currentLanguage == AppLanguage.HINDI)
-                        "1. आस-पास के फ़ोन क्यों नहीं दिख रहे?"
-                    else
-                        "1. Why are nearby devices not showing up?",
+                    text = if (isHindi) "आस-पास के फ़ोन (Wi-Fi Direct)" else "Nearby Devices (Wi-Fi Direct)",
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = if (currentLanguage == AppLanguage.HINDI)
-                        "दोनों फ़ोन में Wi-Fi चालू होना चाहिए (इंटरनेट ज़रूरी नहीं है)। यदि आपका फ़ोन Android 12 या उससे पुराना है, तो GPS/Location चालू करना एंड्रॉइड सिस्टम के नियम के अनुसार अनिवार्य है।"
-                    else
-                        "Both phones must have Wi-Fi enabled (internet is not needed). On Android 12 and below, Location/GPS must be turned ON for Wi-Fi Direct discovery."
+                    text = "Status: $p2pStatus",
+                    fontSize = 12.sp,
+                    color = Color(0xFF34D399)
                 )
+            }
+            Button(onClick = onRescan, shape = RoundedCornerShape(12.dp)) {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (isHindi) "खोजें" else "Scan")
+            }
+        }
+
+        if (detectedHostIp.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF064E3B))
+                    .padding(14.dp)
+            ) {
+                Text(
+                    text = if (isHindi) "✅ Wi-Fi Direct कनेक्ट हो गया!" else "✅ Wi-Fi Direct Connected!",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = "Host IP: $detectedHostIp (${if (isGroupOwner) "Host/Receiver" else "Client/Sender"})",
+                    fontSize = 12.sp,
+                    color = Color(0xFFA7F3D0)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onGoSend, modifier = Modifier.weight(1f)) {
+                        Text(if (isHindi) "फ़ाइल भेजें" else "Send File")
+                    }
+                    Button(onClick = onGoReceive, modifier = Modifier.weight(1f)) {
+                        Text(if (isHindi) "प्राप्त करें" else "Receive")
+                    }
+                }
+            }
+        }
+
+        if (peers.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = null,
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(48.dp)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = if (isHindi)
+                        "आस-पास के फ़ोन खोजे जा रहे हैं...\nदोनों फ़ोन में Wi-Fi और Location चालू रखें।"
+                    else
+                        "Scanning nearby phones...\nKeep Wi-Fi and Location turned ON on both phones.",
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            peers.forEach { peer ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable { onConnectPeer(peer) }
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = peer.deviceName.ifEmpty { "Android Peer" },
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = peer.deviceAddress,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Button(onClick = { onConnectPeer(peer) }) {
+                        Text(if (isHindi) "कनेक्ट करें" else "Connect")
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun MilestonePlaceholderScreen(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
+fun HistoryScreenM4(
+    isHindi: Boolean,
+    records: List<TransferRecord>,
     onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(64.dp)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = subtitle,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            text = if (isHindi) "ट्रांसफर इतिहास (History)" else "Transfer History",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onBack, shape = RoundedCornerShape(12.dp)) {
-            Icon(Icons.Default.ArrowBack, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("होम पर लौटें / Back to Home")
+        if (records.isEmpty()) {
+            Text(
+                text = if (isHindi) "अभी तक कोई फ़ाइल भेजी या प्राप्त नहीं की गई है।" else "No files transferred in this session yet.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            records.forEach { rec ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(14.dp)
+                ) {
+                    Text(
+                        text = "${rec.direction}: ${rec.fileName} (${rec.sizeText})",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (rec.verified) "✅ SHA-256 Verified • ${rec.pathOrNote}" else "⚠️ Hash Mismatch",
+                        fontSize = 12.sp,
+                        color = if (rec.verified) Color(0xFF34D399) else Color(0xFFF87171)
+                    )
+                }
+            }
+        }
+        Button(onClick = onBack) {
+            Text(if (isHindi) "होम पर लौटें" else "Back to Home")
         }
     }
+}
+
+@Composable
+fun SettingsScreenInfo(
+    isHindi: Boolean,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = if (isHindi) "Safe P2P India सेटिंग्स" else "Safe P2P India Settings",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = if (isHindi)
+                "• ऐप नाम: Safe P2P India\n• माइलस्टोन 2: SAF फ़ाइल पिकर + SHA-256 हैश\n• माइलस्टोन 3: Wi-Fi Direct रडार\n• माइलस्टोन 4: TCP Port 8988 Socket इंजन"
+            else
+                "• App: Safe P2P India\n• Milestone 2: SAF File Picker + SHA-256\n• Milestone 3: Wi-Fi Direct Radar\n• Milestone 4: TCP Port 8988 Socket Engine",
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(onClick = onBack) {
+            Text(if (isHindi) "होम पर लौटें" else "Back to Home")
+        }
+    }
+}
+
+// --- Helper Functions for Milestone 2 (SAF + SHA-256) & Milestone 4 (Sockets) ---
+
+suspend fun extractFileDetailsAndHash(context: Context, uri: Uri): SelectedFileInfo =
+    withContext(Dispatchers.IO) {
+        var name = "selected_file"
+        var size = 0L
+        try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst()) {
+                    if (nameIndex != -1) name = cursor.getString(nameIndex) ?: name
+                    if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
+                }
+            }
+        } catch (_: Exception) {}
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        var countedBytes = 0L
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = ByteArray(64 * 1024)
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) {
+                    digest.update(buffer, 0, read)
+                    countedBytes += read
+                }
+            }
+        } catch (_: Exception) {}
+
+        if (size <= 0L) size = countedBytes
+        val hashBytes = digest.digest()
+        val hexHash = hashBytes.joinToString("") { "%02x".format(it) }
+
+        SelectedFileInfo(
+            uri = uri,
+            name = name,
+            sizeBytes = size,
+            sha256 = hexHash
+        )
+    }
+
+suspend fun sendFileOverSocket(
+    context: Context,
+    fileInfo: SelectedFileInfo,
+    hostIp: String,
+    port: Int,
+    onProgress: (Float, String, String) -> Unit,
+    onComplete: (Boolean, String) -> Unit
+) = withContext(Dispatchers.IO) {
+    val socket = Socket()
+    try {
+        socket.connect(InetSocketAddress(hostIp, port), 10000)
+        val outStream = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
+
+        // Send Metadata Header
+        outStream.writeUTF(fileInfo.name)
+        outStream.writeLong(fileInfo.sizeBytes)
+        outStream.writeUTF(fileInfo.sha256)
+        outStream.flush()
+
+        val startTime = System.currentTimeMillis()
+        var totalSent = 0L
+        val buffer = ByteArray(64 * 1024)
+
+        context.contentResolver.openInputStream(fileInfo.uri)?.use { input ->
+            var read: Int
+            while (input.read(buffer).also { read = it } != -1) {
+                outStream.write(buffer, 0, read)
+                totalSent += read
+
+                val elapsedSec = ((System.currentTimeMillis() - startTime) / 1000.0).coerceAtLeast(0.1)
+                val mbPerSec = (totalSent / (1024.0 * 1024.0)) / elapsedSec
+                val prog = if (fileInfo.sizeBytes > 0) totalSent.toFloat() / fileInfo.sizeBytes else 0.5f
+
+                withContext(Dispatchers.Main) {
+                    onProgress(
+                        prog.coerceIn(0f, 1f),
+                        String.format("%.2f MB/s", mbPerSec),
+                        "Sending: ${formatFileSize(totalSent)} / ${formatFileSize(fileInfo.sizeBytes)}"
+                    )
+                }
+            }
+        }
+        outStream.flush()
+
+        withContext(Dispatchers.Main) {
+            onProgress(1f, "Done", "✅ फ़ाइल सफलतापूर्वक भेजी गई! (SHA-256 Sent)")
+            onComplete(true, "✅ फ़ाइल सफलतापूर्वक भेजी गई! (${fileInfo.name})")
+        }
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            onComplete(false, "❌ ट्रांसफर त्रुटि: ${e.localizedMessage ?: "कनेक्शन विफल"}")
+        }
+    } finally {
+        try {
+            socket.close()
+        } catch (_: Exception) {}
+    }
+}
+
+suspend fun receiveFileServerSocket(
+    context: Context,
+    port: Int,
+    onProgress: (Float, String, String) -> Unit,
+    onComplete: (Boolean, TransferRecord?, String) -> Unit
+) = withContext(Dispatchers.IO) {
+    var serverSocket: ServerSocket? = null
+    try {
+        serverSocket = ServerSocket(port)
+        val client = serverSocket.accept()
+        val inStream = DataInputStream(BufferedInputStream(client.getInputStream()))
+
+        val fileName = inStream.readUTF()
+        val fileSize = inStream.readLong()
+        val expectedSha256 = inStream.readUTF()
+
+        val outDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+        val outFile = File(outDir, fileName)
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        val startTime = System.currentTimeMillis()
+        var totalReceived = 0L
+        val buffer = ByteArray(64 * 1024)
+
+        FileOutputStream(outFile).use { fos ->
+            var read: Int
+            var remaining = fileSize
+            while (remaining > 0 && inStream.read(
+                    buffer,
+                    0,
+                    minOf(buffer.size.toLong(), remaining).toInt()
+                ).also { read = it } != -1
+            ) {
+                fos.write(buffer, 0, read)
+                digest.update(buffer, 0, read)
+                totalReceived += read
+                remaining -= read
+
+                val elapsedSec = ((System.currentTimeMillis() - startTime) / 1000.0).coerceAtLeast(0.1)
+                val mbPerSec = (totalReceived / (1024.0 * 1024.0)) / elapsedSec
+                val prog = if (fileSize > 0) totalReceived.toFloat() / fileSize else 0.5f
+
+                withContext(Dispatchers.Main) {
+                    onProgress(
+                        prog.coerceIn(0f, 1f),
+                        String.format("%.2f MB/s", mbPerSec),
+                        "Receiving: ${formatFileSize(totalReceived)} / ${formatFileSize(fileSize)}"
+                    )
+                }
+            }
+        }
+
+        val actualSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+        val verified = actualSha256.equals(expectedSha256, ignoreCase = true)
+
+        client.close()
+        withContext(Dispatchers.Main) {
+            val rec = TransferRecord(
+                fileName = fileName,
+                sizeText = formatFileSize(fileSize),
+                direction = "RECEIVED",
+                verified = verified,
+                pathOrNote = outFile.absolutePath
+            )
+            onProgress(1f, "Done", "✅ प्राप्त हुआ: $fileName")
+            onComplete(
+                true,
+                rec,
+                if (verified) "✅ फ़ाइल प्राप्त हुई और SHA-256 सत्यापित है!\nSaved: ${outFile.name}"
+                else "⚠️ फ़ाइल प्राप्त हुई पर SHA-256 मेल नहीं खाया"
+            )
+        }
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) {
+            onComplete(false, null, "❌ रिसीवर त्रुटि: ${e.localizedMessage ?: "बंद हो गया"}")
+        }
+    } finally {
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
+    }
+}
+
+fun formatFileSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.2f MB", mb)
+    val gb = mb / 1024.0
+    return String.format("%.2f GB", gb)
+}
+
+fun getLocalIpAddress(): String {
+    try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val intf = interfaces.nextElement()
+            val addrs = intf.inetAddresses
+            while (addrs.hasMoreElements()) {
+                val addr = addrs.nextElement()
+                if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                    return addr.hostAddress ?: ""
+                }
+            }
+        }
+    } catch (_: Exception) {}
+    return ""
 }
