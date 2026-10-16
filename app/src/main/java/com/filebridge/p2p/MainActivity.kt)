@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
             var currentScreen by remember { mutableStateOf(AppScreen.SPLASH) }
             var customDeviceName by remember { mutableStateOf(defaultDeviceName) }
 
-            // Milestone 2: चुनी गई फ़ाइल की स्टेट (Uri, Name, Size)
+            // Milestone 2: File States (Uri, Name, Size)
             var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
             var selectedFileName by remember { mutableStateOf<String?>(null) }
             var selectedFileSize by remember { mutableStateOf<String?>(null) }
@@ -112,7 +112,6 @@ class MainActivity : ComponentActivity() {
                             selectedFileName = selectedFileName,
                             selectedFileSize = selectedFileSize,
                             onPickFileClick = {
-                                // कोई भी फ़ाइल चुनने की अनुमति (*/*)
                                 filePickerLauncher.launch(arrayOf("*/*"))
                             }
                         )
@@ -123,7 +122,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// बाइट्स को KB/MB में बदलने का आसान तरीका
 fun formatFileSize(sizeBytes: Long): String {
     if (sizeBytes <= 0) return "0 KB"
     val kb = sizeBytes / 1024.0
@@ -587,7 +585,7 @@ fun HomeScreenContent(
 }
 
 /**
- * Milestone 2: असली फ़ाइल चुनने और भेजने की तैयारी स्क्रीन
+ * Milestone 2: Send Preparation Screen with Real File Info
  */
 @Composable
 fun SendPreparationScreen(
@@ -775,7 +773,7 @@ fun SettingsScreenContent(
             value = deviceName,
             onValueChange = onDeviceNameChange,
             label = { Text(strings.deviceNameLabel) },
-            singleLine =: true,
+            singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp)
         )
@@ -843,7 +841,7 @@ fun HelpScreenContent(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        TextButton(onClick, onBack) {
+        TextButton(onClick = onBack) {
             Icon(Icons.Default.ArrowBack, contentDescription = null)
             Spacer(modifier = Modifier.width(6.dp))
             Text(if (currentLanguage == AppLanguage.HINDI) "वापस जाएं" else "Back")
