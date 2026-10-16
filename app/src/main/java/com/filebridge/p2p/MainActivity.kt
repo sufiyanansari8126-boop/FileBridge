@@ -56,27 +56,13 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
 
-data class FileMeta(
-    val uri: Uri,
-    val name: String,
-    val size: Long,
-    val sha256: String
-)
-
-data class LogItem(
-    val name: String,
-    val size: String,
-    val type: String,
-    val verified: Boolean,
-    val note: String
-)
+data class FileMeta(val uri: Uri, val name: String, val size: Long, val sha256: String)
+data class LogItem(val name: String, val size: String, val type: String, val verified: Boolean, val note: String)
 
 class MainActivity : ComponentActivity() {
-
     private var p2pManager: WifiP2pManager? = null
     private var p2pChannel: WifiP2pManager.Channel? = null
     private var receiver: BroadcastReceiver? = null
-
     val peerList = mutableStateListOf<WifiP2pDevice>()
     var p2pState by mutableStateOf("Ready")
     var hostIpAddress by mutableStateOf("")
@@ -90,35 +76,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             var dark by remember { mutableStateOf(true) }
             var hindi by remember { mutableStateOf(true) }
-
             MaterialTheme(
                 colorScheme = if (dark) darkColorScheme(
-                    primary = Color(0xFF4F46E5),
-                    background = Color(0xFF0B0F19),
-                    surface = Color(0xFF161F30),
-                    onBackground = Color.White,
-                    onSurface = Color.White
+                    primary = Color(0xFF4F46E5), background = Color(0xFF0B0F19), surface = Color(0xFF161F30), onBackground = Color.White, onSurface = Color.White
                 ) else lightColorScheme(
-                    primary = Color(0xFF4338CA),
-                    background = Color(0xFFF8FAFC),
-                    surface = Color.White,
-                    onBackground = Color(0xFF0F172A),
-                    onSurface = Color(0xFF0F172A)
+                    primary = Color(0xFF4338CA), background = Color(0xFFF8FAFC), surface = Color.White, onBackground = Color(0xFF0F172A), onSurface = Color(0xFF0F172A)
                 )
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MainAppRoot(
-                        dark = dark,
-                        onToggleDark = { dark = !dark },
-                        hindi = hindi,
-                        onToggleHindi = { hindi = !hindi },
-                        peers = peerList,
-                        status = p2pState,
-                        hostIp = hostIpAddress,
-                        isOwner = isOwner,
-                        onScan = { startScan() },
-                        onConnect = { d -> connectDevice(d) }
-                    )
+                    MainAppRoot(dark, { dark = !dark }, hindi, { hindi = !hindi }, peerList, p2pState, hostIpAddress, isOwner, { startScan() }, { d -> connectDevice(d) })
                 }
             }
         }
@@ -134,9 +100,7 @@ class MainActivity : ComponentActivity() {
                 override fun onSuccess() { p2pState = "Radar Active" }
                 override fun onFailure(r: Int) { p2pState = "Scan Error ($r)" }
             })
-        } catch (_: Exception) {
-            p2pState = "Permission Needed"
-        }
+        } catch (_: Exception) { p2pState = "Error" }
     }
 
     @SuppressLint("MissingPermission")
@@ -150,9 +114,7 @@ class MainActivity : ComponentActivity() {
                 override fun onSuccess() { p2pState = "Connected: ${device.deviceName}" }
                 override fun onFailure(r: Int) { p2pState = "Failed ($r)" }
             })
-        } catch (_: Exception) {
-            p2pState = "Error"
-        }
+        } catch (_: Exception) { p2pState = "Error" }
     }
 
     override fun onResume() {
@@ -193,46 +155,25 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainAppRoot(
-    dark: Boolean,
-    onToggleDark: () -> Unit,
-    hindi: Boolean,
-    onToggleHindi: () -> Unit,
-    peers: List<WifiP2pDevice>,
-    status: String,
-    hostIp: String,
-    isOwner: Boolean,
-    onScan: () -> Unit,
-    onConnect: (WifiP2pDevice) -> Unit
-) {
+fun MainAppRoot(dark: Boolean, onToggleDark: () -> Unit, hindi: Boolean, onToggleHindi: () -> Unit, peers: List<WifiP2pDevice>, status: String, hostIp: String, isOwner: Boolean, onScan: () -> Unit, onConnect: (WifiP2pDevice) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-
     var screen by remember { mutableStateOf("HOME") }
     var selectedFile by remember { mutableStateOf<FileMeta?>(null) }
     var hashing by remember { mutableStateOf(false) }
-
     var targetIp by remember(hostIp) { mutableStateOf(if (hostIp.isNotEmpty()) hostIp else "192.168.49.1") }
     var prog by remember { mutableStateOf(0f) }
     var statusText by remember { mutableStateOf("") }
     var speedText by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
-
     val history = remember { mutableStateListOf<LogItem>() }
 
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        onScan()
-    }
-
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { onScan() }
     fun checkAndScan() {
         val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (Build.VERSION.SDK_INT >= 33) perms.add("android.permission.NEARBY_WIFI_DEVICES")
-        if (perms.all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }) {
-            onScan()
-        } else {
-            permLauncher.launch(perms.toTypedArray())
-        }
+        if (perms.all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }) { onScan() } else { permLauncher.launch(perms.toTypedArray()) }
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -248,22 +189,9 @@ fun MainAppRoot(
 
     Scaffold(
         topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF3B82F6)))),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF3B82F6)))), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.Share, contentDescription = null, tint = Color.White)
                     }
                     Spacer(modifier = Modifier.width(10.dp))
@@ -273,106 +201,39 @@ fun MainAppRoot(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onToggleHindi) {
-                        Text(text = if (hindi) "EN" else "हिंदी", fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                    }
-                    IconButton(onClick = onToggleDark) {
-                        Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFBBF24))
-                    }
+                    TextButton(onClick = onToggleHindi) { Text(text = if (hindi) "EN" else "हिंदी", fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8)) }
+                    IconButton(onClick = onToggleDark) { Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFBBF24)) }
                 }
             }
         },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                NavigationBarItem(
-                    selected = screen == "HOME" || screen == "SEND" || screen == "RECEIVE",
-                    onClick = { screen = "HOME" },
-                    icon = { Icon(Icons.Default.Home, contentDescription = null) },
-                    label = { Text(if (hindi) "होम" else "Home") }
-                )
-                NavigationBarItem(
-                    selected = screen == "NEARBY",
-                    onClick = { screen = "NEARBY"; checkAndScan() },
-                    icon = { Icon(Icons.Default.Place, contentDescription = null) },
-                    label = { Text(if (hindi) "आस-पास" else "Nearby") }
-                )
-                NavigationBarItem(
-                    selected = screen == "HISTORY",
-                    onClick = { screen = "HISTORY" },
-                    icon = { Icon(Icons.Default.List, contentDescription = null) },
-                    label = { Text(if (hindi) "इतिहास" else "History") }
-                )
-                NavigationBarItem(
-                    selected = screen == "SETTINGS",
-                    onClick = { screen = "SETTINGS" },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text(if (hindi) "सेटिंग्स" else "Settings") }
-                )
+                NavigationBarItem(selected = screen == "HOME" || screen == "SEND" || screen == "RECEIVE", onClick = { screen = "HOME" }, icon = { Icon(Icons.Default.Home, contentDescription = null) }, label = { Text(if (hindi) "होम" else "Home") })
+                NavigationBarItem(selected = screen == "NEARBY", onClick = { screen = "NEARBY"; checkAndScan() }, icon = { Icon(Icons.Default.Place, contentDescription = null) }, label = { Text(if (hindi) "आस-पास" else "Nearby") })
+                NavigationBarItem(selected = screen == "HISTORY", onClick = { screen = "HISTORY" }, icon = { Icon(Icons.Default.List, contentDescription = null) }, label = { Text(if (hindi) "इतिहास" else "History") })
+                NavigationBarItem(selected = screen == "SETTINGS", onClick = { screen = "SETTINGS" }, icon = { Icon(Icons.Default.Settings, contentDescription = null) }, label = { Text(if (hindi) "सेटिंग्स" else "Settings") })
             }
         }
     ) { pad ->
         Box(modifier = Modifier.fillMaxSize().padding(pad)) {
             when (screen) {
-                "HOME" -> HomeScreen(
-                    hindi = hindi,
-                    status = status,
-                    file = selectedFile,
-                    onSend = { picker.launch(arrayOf("*/*")) },
-                    onReceive = { screen = "RECEIVE" },
-                    onNearby = { screen = "NEARBY"; checkAndScan() }
-                )
-                "SEND" -> SendScreen(
-                    hindi = hindi,
-                    file = selectedFile,
-                    hashing = hashing,
-                    ip = targetIp,
-                    onIpChange = { targetIp = it },
-                    peers = peers,
-                    onPick = { picker.launch(arrayOf("*/*")) },
-                    onScan = { checkAndScan() },
-                    onConnect = onConnect,
-                    busy = busy,
-                    prog = prog,
-                    status = statusText,
-                    speed = speedText,
-                    onStartSend = {
-                        val f = selectedFile ?: return@SendScreen
-                        if (busy) return@SendScreen
-                        busy = true
-                        scope.launch {
-                            sendFileSocket(ctx, f, targetIp.trim(), 8988, { p, sp, st ->
-                                prog = p; speedText = sp; statusText = st
-                            }, { ok, msg ->
-                                busy = false; statusText = msg
-                                if (ok) history.add(0, LogItem(f.name, formatSize(f.size), "SENT", true, "To $targetIp"))
-                            })
-                        }
-                    },
-                    onBack = { screen = "HOME" }
-                )
-                "RECEIVE" -> ReceiveScreen(
-                    hindi = hindi,
-                    ip = getMyIp().ifEmpty { "192.168.49.1" },
-                    status = status,
-                    listening = listening,
-                    prog = prog,
-                    statusText = statusText,
-                    speed = speedText,
-                    onStartServer = {
-                        if (listening) return@ReceiveScreen
-                        checkAndScan()
-                        listening = true
-                        scope.launch {
-                            receiveFileSocket(ctx, 8988, { p, sp, st ->
-                                prog = p; speedText = sp; statusText = st
-                            }, { ok, item, msg ->
-                                listening = false; statusText = msg
-                                if (ok && item != null) history.add(0, item)
-                            })
-                        }
-                    },
-                    onBack = { screen = "HOME" }
-                )
+                "HOME" -> HomeScreen(hindi, status, selectedFile, { picker.launch(arrayOf("*/*")) }, { screen = "RECEIVE" }, { screen = "NEARBY"; checkAndScan() })
+                "SEND" -> SendScreen(hindi, selectedFile, hashing, targetIp, { targetIp = it }, peers, { picker.launch(arrayOf("*/*")) }, { checkAndScan() }, onConnect, busy, prog, statusText, speedText, {
+                    val f = selectedFile ?: return@SendScreen
+                    if (busy) return@SendScreen
+                    busy = true
+                    scope.launch {
+                        sendFileSocket(ctx, f, targetIp.trim(), 8988, { p, sp, st -> prog = p; speedText = sp; statusText = st }, { ok, msg -> busy = false; statusText = msg; if (ok) history.add(0, LogItem(f.name, formatSize(f.size), "SENT", true, "To $targetIp")) })
+                    }
+                }, { screen = "HOME" })
+                "RECEIVE" -> ReceiveScreen(hindi, getMyIp().ifEmpty { "192.168.49.1" }, status, listening, prog, statusText, speedText, {
+                    if (listening) return@ReceiveScreen
+                    checkAndScan()
+                    listening = true
+                    scope.launch {
+                        receiveFileSocket(ctx, 8988, { p, sp, st -> prog = p; speedText = sp; statusText = st }, { ok, item, msg -> listening = false; statusText = msg; if (ok && item != null) history.add(0, item) })
+                    }
+                }, { screen = "HOME" })
                 "NEARBY" -> NearbyScreen(hindi, peers, status, hostIp, isOwner, { checkAndScan() }, onConnect, { screen = "SEND" }, { screen = "RECEIVE" })
                 "HISTORY" -> HistoryScreen(hindi, history) { screen = "HOME" }
                 "SETTINGS" -> SettingsScreen(hindi) { screen = "HOME" }
@@ -393,15 +254,7 @@ fun HomeScreen(hindi: Boolean, status: String, file: FileMeta?, onSend: () -> Un
                 Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF34D399))
             }
         }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF4F46E5))))
-                .clickable { onSend() }
-                .padding(24.dp)
-        ) {
+        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF4F46E5)))).clickable { onSend() }.padding(24.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(if (hindi) "फ़ाइल भेजें (SEND)" else "SEND FILE", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
@@ -413,27 +266,18 @@ fun HomeScreen(hindi: Boolean, status: String, file: FileMeta?, onSend: () -> Un
                 }
             }
         }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF9333EA), Color(0xFF6B21A8))))
-                .clickable { onReceive() }
-                .padding(24.dp)
-        ) {
+        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(Color(0xFF9333EA), Color(0xFF6B21A8)))).clickable { onReceive() }.padding(24.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(if (hindi) "प्राप्त करें (RECEIVE)" else "RECEIVE FILE", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(if (hindi) "दूसरे फ़ोन से फ़ाइल लेने के लिए सर्वर खोलें" else "Start server to receive files on Port 8988", fontSize = 13.sp, color = Color.White.copy(0.9f))
+                    Text(if (hindi) "दूसरे फ़ोन से फ़ाइल लेने के लिए सर्वर खोलें" else "Start server to receive files", fontSize = 13.sp, color = Color.White.copy(0.9f))
                 }
                 Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(0.2f)), contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
                 }
             }
         }
-
         if (file != null) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -453,15 +297,12 @@ fun SendScreen(hindi: Boolean, file: FileMeta?, hashing: Boolean, ip: String, on
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = null) }
             Text(if (hindi) "फ़ाइल भेजें (Send)" else "Send File", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
-
         Button(onClick = onPick, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
             Icon(Icons.Default.Add, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text(if (file == null) (if (hindi) "फ़ाइल चुनें (SAF Picker)" else "Pick File") else (if (hindi) "दूसरी फ़ाइल चुनें" else "Change File"), fontWeight = FontWeight.Bold)
         }
-
         if (hashing) Text(if (hindi) "फ़ाइल का SHA-256 निकाला जा रहा है..." else "Computing Hash...", color = Color(0xFF38BDF8))
-
         if (file != null) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -471,7 +312,6 @@ fun SendScreen(hindi: Boolean, file: FileMeta?, hashing: Boolean, ip: String, on
                 }
             }
         }
-
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -487,7 +327,6 @@ fun SendScreen(hindi: Boolean, file: FileMeta?, hashing: Boolean, ip: String, on
                 OutlinedTextField(value = ip, onValueChange = onIpChange, label = { Text("IP Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         }
-
         if (status.isNotEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -499,7 +338,6 @@ fun SendScreen(hindi: Boolean, file: FileMeta?, hashing: Boolean, ip: String, on
                 }
             }
         }
-
         Button(onClick = onStartSend, enabled = file != null && !busy, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))) {
             Icon(Icons.Default.Send, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
@@ -515,7 +353,6 @@ fun ReceiveScreen(hindi: Boolean, ip: String, status: String, listening: Boolean
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = null) }
             Text(if (hindi) "फ़ाइल प्राप्त करें" else "Receive File", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
-
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(if (hindi) "आपका रिसीवर IP:" else "Your IP Address:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -523,13 +360,11 @@ fun ReceiveScreen(hindi: Boolean, ip: String, status: String, listening: Boolean
                 Text("Port: 8988 • Status: $status", fontSize = 12.sp, color = Color(0xFF34D399))
             }
         }
-
         Button(onClick = onStartServer, enabled = !listening, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9333EA))) {
             Icon(Icons.Default.CheckCircle, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text(if (listening) (if (hindi) "प्रतीक्षा में..." else "Waiting...") else (if (hindi) "रिसीवर सर्वर चालू करें" else "Start Server"), fontWeight = FontWeight.Bold)
         }
-
         if (statusText.isNotEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -612,7 +447,6 @@ suspend fun processFileUri(ctx: Context, uri: Uri): FileMeta = withContext(Dispa
             }
         }
     } catch (_: Exception) {}
-
     val md = MessageDigest.getInstance("SHA-256")
     var total = 0L
     try {
@@ -625,7 +459,6 @@ suspend fun processFileUri(ctx: Context, uri: Uri): FileMeta = withContext(Dispa
             }
         }
     } catch (_: Exception) {}
-
     if (size <= 0L) size = total
     FileMeta(uri, name, size, md.digest().joinToString("") { "%02x".format(it) })
 }
@@ -635,11 +468,7 @@ suspend fun sendFileSocket(ctx: Context, file: FileMeta, ip: String, port: Int, 
     try {
         s.connect(InetSocketAddress(ip, port), 10000)
         val out = DataOutputStream(BufferedOutputStream(s.getOutputStream()))
-        out.writeUTF(file.name)
-        out.writeLong(file.size)
-        out.writeUTF(file.sha256)
-        out.flush()
-
+        out.writeUTF(file.name); out.writeLong(file.size); out.writeUTF(file.sha256); out.flush()
         val t0 = System.currentTimeMillis()
         var sent = 0L
         val buf = ByteArray(64 * 1024)
@@ -658,9 +487,7 @@ suspend fun sendFileSocket(ctx: Context, file: FileMeta, ip: String, port: Int, 
         withContext(Dispatchers.Main) { onProg(1f, "Done", "✅ Sent Successfully!"); onDone(true, "Sent") }
     } catch (e: Exception) {
         withContext(Dispatchers.Main) { onDone(false, "Error: ${e.localizedMessage}") }
-    } finally {
-        try { s.close() } catch (_: Exception) {}
-    }
+    } finally { try { s.close() } catch (_: Exception) {} }
 }
 
 suspend fun receiveFileSocket(ctx: Context, port: Int, onProg: (Float, String, String) -> Unit, onDone: (Boolean, LogItem?, String) -> Unit) = withContext(Dispatchers.IO) {
@@ -669,25 +496,20 @@ suspend fun receiveFileSocket(ctx: Context, port: Int, onProg: (Float, String, S
         ss = ServerSocket(port)
         val client = ss.accept()
         val inp = DataInputStream(BufferedInputStream(client.getInputStream()))
-        val fName = inp.readUTF()
-        val fSize = inp.readLong()
-        val expHash = inp.readUTF()
-
+        val fName = inp.readUTF(); val fSize = inp.readLong(); val expHash = inp.readUTF()
         val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.filesDir
         val target = File(dir, fName)
         val md = MessageDigest.getInstance("SHA-256")
         val t0 = System.currentTimeMillis()
         var rcv = 0L
         val buf = ByteArray(64 * 1024)
-
         FileOutputStream(target).use { fos ->
             var r: Int
             var rem = fSize
             while (rem > 0 && inp.read(buf, 0, minOf(buf.size.toLong(), rem).toInt()).also { r = it } != -1) {
                 fos.write(buf, 0, r)
                 md.update(buf, 0, r)
-                rcv += r
-                rem -= r
+                rcv += r; rem -= r
                 val sec = ((System.currentTimeMillis() - t0) / 1000.0).coerceAtLeast(0.1)
                 val mbps = (rcv / (1024.0 * 1024.0)) / sec
                 val p = if (fSize > 0) rcv.toFloat() / fSize else 0.5f
@@ -697,7 +519,6 @@ suspend fun receiveFileSocket(ctx: Context, port: Int, onProg: (Float, String, S
         val actHash = md.digest().joinToString("") { "%02x".format(it) }
         val ok = actHash.equals(expHash, ignoreCase = true)
         client.close()
-
         withContext(Dispatchers.Main) {
             val item = LogItem(fName, formatSize(fSize), "RECEIVED", ok, target.absolutePath)
             onProg(1f, "Done", "✅ Received!")
@@ -705,9 +526,7 @@ suspend fun receiveFileSocket(ctx: Context, port: Int, onProg: (Float, String, S
         }
     } catch (e: Exception) {
         withContext(Dispatchers.Main) { onDone(false, null, "Error: ${e.localizedMessage}") }
-    } finally {
-        try { ss?.close() } catch (_: Exception) {}
-    }
+    } finally { try { ss?.close() } catch (_: Exception) {} }
 }
 
 fun formatSize(b: Long): String {
