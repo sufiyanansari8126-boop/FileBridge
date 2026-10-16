@@ -1,9 +1,12 @@
 package com.filebridge.p2p
 
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -25,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import com.filebridge.p2p.ui.theme.*
 import kotlinx.coroutines.delay
 
@@ -43,7 +47,6 @@ enum class AppScreen {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         val defaultDeviceName = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
 
         setContent {
@@ -53,7 +56,25 @@ class MainActivity : ComponentActivity() {
             var currentScreen by remember { mutableStateOf(AppScreen.SPLASH) }
             var customDeviceName by remember { mutableStateOf(defaultDeviceName) }
 
+            // Milestone 2: चुनी गई फ़ाइल की स्टेट (Uri, Name, Size)
+            var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+            var selectedFileName by remember { mutableStateOf<String?>(null) }
+            var selectedFileSize by remember { mutableStateOf<String?>(null) }
+
             val strings = AppStringsProvider.get(currentLanguage)
+
+            // SAF File Picker Launcher
+            val filePickerLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri: Uri? ->
+                uri?.let {
+                    selectedFileUri = it
+                    val docFile = DocumentFile.fromSingleUri(this, it)
+                    selectedFileName = docFile?.name ?: "Unknown_File"
+                    val sizeBytes = docFile?.length() ?: 0L
+                    selectedFileSize = formatFileSize(sizeBytes)
+                }
+            }
 
             LaunchedEffect(Unit) {
                 delay(1400)
@@ -87,12 +108,32 @@ class MainActivity : ComponentActivity() {
                             isDarkMode = isDarkMode,
                             onThemeToggle = { isDarkMode = it },
                             deviceName = customDeviceName,
-                            onDeviceNameChange = { customDeviceName = it }
+                            onDeviceNameChange = { customDeviceName = it },
+                            selectedFileName = selectedFileName,
+                            selectedFileSize = selectedFileSize,
+                            onPickFileClick = {
+                                // कोई भी फ़ाइल चुनने की अनुमति (*/*)
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                            }
                         )
                     }
                 }
             }
         }
+    }
+}
+
+// बाइट्स को KB/MB में बदलने का आसान तरीका
+fun formatFileSize(sizeBytes: Long): String {
+    if (sizeBytes <= 0) return "0 KB"
+    val kb = sizeBytes / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1.0 -> String.format("%.2f GB", gb)
+        mb >= 1.0 -> String.format("%.2f MB", mb)
+        kb >= 1.0 -> String.format("%.2f KB", kb)
+        else -> "$sizeBytes Bytes"
     }
 }
 
@@ -258,7 +299,10 @@ fun MainScaffoldContainer(
     isDarkMode: Boolean,
     onThemeToggle: (Boolean) -> Unit,
     deviceName: String,
-    onDeviceNameChange: (String) -> Unit
+    onDeviceNameChange: (String) -> Unit,
+    selectedFileName: String?,
+    selectedFileSize: String?,
+    onPickFileClick: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -356,43 +400,45 @@ fun MainScaffoldContainer(
                 AppScreen.HOME -> HomeScreenContent(
                     strings = strings,
                     deviceName = deviceName,
-                    onSendClick = { onNavigate(AppScreen.SEND_PREPARATION) },
+                    onSendClick = {
+                        onPickFileClick()
+                        onNavigate(AppScreen.SEND_PREPARATION)
+                    },
                     onReceiveClick = { onNavigate(AppScreen.RECEIVE_PREPARATION) },
                     onNearbyClick = { onNavigate(AppScreen.NEARBY_DEVICES) }
                 )
-                AppScreen.SEND_PREPARATION -> MilestonePlaceholderScreen(
-                    title = strings.sendButtonTitle,
-                    subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "यह स्क्रीन Milestone 2 में Android Storage Access Framework (SAF) से जुड़ेगी।"
-                    else
-                        "This screen connects to Android SAF in Milestone 2.",
-                    icon = Icons.Default.UploadFile,
+                AppScreen.SEND_PREPARATION -> SendPreparationScreen(
+                    strings = strings,
+                    currentLanguage = currentLanguage,
+                    fileName = selectedFileName,
+                    fileSize = selectedFileSize,
+                    onSelectAnother = onPickFileClick,
                     onBack = { onNavigate(AppScreen.HOME) }
                 )
                 AppScreen.RECEIVE_PREPARATION -> MilestonePlaceholderScreen(
                     title = strings.receiveButtonTitle,
                     subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "यह स्क्रीन Milestone 2 और 3 में Wi-Fi Direct रिसीवर चालू करेगी।"
+                        "यह स्क्रीन Milestone 3 में आपके फ़ोन पर लोकल Wi-Fi Direct रिसीवर और QR कोड चालू करेगी।"
                     else
-                        "This screen activates Wi-Fi Direct receiver in Milestones 2 & 3.",
+                        "This screen activates the local Wi-Fi Direct receiver in Milestone 3.",
                     icon = Icons.Default.Download,
                     onBack = { onNavigate(AppScreen.HOME) }
                 )
                 AppScreen.NEARBY_DEVICES -> MilestonePlaceholderScreen(
                     title = strings.navNearby,
                     subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "Milestone 3 में यहाँ आस-पास के एंड्रॉइड फ़ोनों की लाइव सूची दिखेगी।"
+                        "Milestone 3 में यहाँ WifiP2pManager के ज़रिए आस-पास के असली एंड्रॉइड फ़ोनों की लाइव सूची दिखेगी।"
                     else
-                        "In Milestone 3, nearby Android devices will appear here.",
+                        "In Milestone 3, real nearby Android devices discovered via WifiP2pManager will appear here.",
                     icon = Icons.Default.Radar,
                     onBack = { onNavigate(AppScreen.HOME) }
                 )
                 AppScreen.TRANSFER_HISTORY -> MilestonePlaceholderScreen(
                     title = strings.navHistory,
                     subtitle = if (currentLanguage == AppLanguage.HINDI)
-                        "Milestone 6 में यहाँ Room Database से इतिहास दिखेगा।"
+                        "Milestone 6 में यहाँ Room Database से भेजी और प्राप्त की गई फ़ाइलों का पूरा रिकॉर्ड दिखेगा।"
                     else
-                        "In Milestone 6, transfer history backed by Room database will appear here.",
+                        "In Milestone 6, sent and received file history will appear here.",
                     icon = Icons.Default.History,
                     onBack = { onNavigate(AppScreen.HOME) }
                 )
@@ -540,6 +586,112 @@ fun HomeScreenContent(
     }
 }
 
+/**
+ * Milestone 2: असली फ़ाइल चुनने और भेजने की तैयारी स्क्रीन
+ */
+@Composable
+fun SendPreparationScreen(
+    strings: LocalizedStrings,
+    currentLanguage: AppLanguage,
+    fileName: String?,
+    fileSize: String?,
+    onSelectAnother: () -> Unit,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            TextButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (currentLanguage == AppLanguage.HINDI) "वापस जाएं" else "Back")
+            }
+        }
+
+        Text(
+            text = if (currentLanguage == AppLanguage.HINDI) "फ़ाइल भेजने की तैयारी" else "Send File Preparation",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(AppBranding.PrimaryBlue.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.InsertDriveFile,
+                        contentDescription = null,
+                        tint = AppBranding.PrimaryBlue,
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = fileName ?: (if (currentLanguage == AppLanguage.HINDI) "कोई फ़ाइल नहीं चुनी गई" else "No file selected"),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = fileSize ?: "0 KB",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                OutlinedButton(
+                    onClick = onSelectAnother,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (currentLanguage == AppLanguage.HINDI) "दूसरी फ़ाइल चुनें" else "Pick Another File")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Button(
+            onClick = {},
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AppBranding.PrimaryBlue)
+        ) {
+            Icon(Icons.Default.Radar, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (currentLanguage == AppLanguage.HINDI) "आस-पास के डिवाइस खोजें (Search Nearby)" else "Scan Nearby Devices",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
 @Composable
 fun HeroActionCard(
     title: String,
@@ -623,7 +775,7 @@ fun SettingsScreenContent(
             value = deviceName,
             onValueChange = onDeviceNameChange,
             label = { Text(strings.deviceNameLabel) },
-            singleLine = true,
+            singleLine =: true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp)
         )
@@ -636,7 +788,7 @@ fun SettingsScreenContent(
                     FilterChip(
                         selected = currentLanguage == AppLanguage.HINDI,
                         onClick = { onLanguageChange(AppLanguage.HINDI) },
-                        label = { Text("हिंदी") }
+                        label = { Text("हिंदी (डिफ़ॉल्ट)") }
                     )
                     FilterChip(
                         selected = currentLanguage == AppLanguage.ENGLISH,
@@ -691,7 +843,7 @@ fun HelpScreenContent(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        TextButton(onClick = onBack) {
+        TextButton(onClick, onBack) {
             Icon(Icons.Default.ArrowBack, contentDescription = null)
             Spacer(modifier = Modifier.width(6.dp))
             Text(if (currentLanguage == AppLanguage.HINDI) "वापस जाएं" else "Back")
@@ -712,9 +864,9 @@ fun HelpScreenContent(
                 )
                 Text(
                     text = if (currentLanguage == AppLanguage.HINDI)
-                        "दोनों फ़ोन में Wi-Fi चालू होना चाहिए। Android 12 और उससे पुराने फोन में Location/GPS चालू होना अनिवार्य है।"
+                        "दोनों फ़ोन में Wi-Fi चालू होना चाहिए (इंटरनेट ज़रूरी नहीं है)। यदि आपका फ़ोन Android 12 या उससे पुराना है, तो GPS/Location चालू करना एंड्रॉइड सिस्टम के नियम के अनुसार अनिवार्य है।"
                     else
-                        "Both phones must have Wi-Fi enabled. On Android 12 and below, Location must be turned ON."
+                        "Both phones must have Wi-Fi enabled (internet is not needed). On Android 12 and below, Location/GPS must be turned ON for Wi-Fi Direct discovery."
                 )
             }
         }
@@ -753,7 +905,7 @@ fun MilestonePlaceholderScreen(
         Button(onClick = onBack, shape = RoundedCornerShape(12.dp)) {
             Icon(Icons.Default.ArrowBack, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("होम पर लौटें / Back")
+            Text("होम पर लौटें / Back to Home")
         }
     }
 }
